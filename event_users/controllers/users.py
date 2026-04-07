@@ -1,0 +1,36 @@
+import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from event_users.dto.users import CreateUserDTO, ListUsersQueryDTO, UpdateUserDTO, UserDTO
+from event_users.interfaces.users import IUsersDBAdapter
+
+
+class UsersController:
+    def __init__(self, db_adapter: IUsersDBAdapter) -> None:
+        self._db = db_adapter
+
+    @staticmethod
+    def _validate_timezone(time_zone: str | None) -> None:
+        if time_zone is None:
+            return
+        try:
+            ZoneInfo(time_zone)
+        except ZoneInfoNotFoundError as e:
+            raise ValueError(f"Invalid time_zone: {time_zone!r}") from e
+
+    async def create_user(self, dto: CreateUserDTO) -> UserDTO:
+        self._validate_timezone(dto.time_zone)
+        return await self._db.create_user(dto)
+
+    async def update_user(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> UserDTO | None:
+        self._validate_timezone(dto.time_zone)
+        return await self._db.update_user(user_id, dto)
+
+    async def get_user(self, user_id: uuid.UUID) -> UserDTO | None:
+        return await self._db.get_user(user_id)
+
+    async def get_user_by_email_role(self, email: str, role: str) -> UserDTO | None:
+        return await self._db.get_user_by_email_role(email=email, role=role)
+
+    async def list_users(self, query: ListUsersQueryDTO) -> tuple[list[UserDTO], int]:
+        return await self._db.list_users(query)
