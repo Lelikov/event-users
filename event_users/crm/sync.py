@@ -64,20 +64,36 @@ class CrmSyncService:
     async def sync(self) -> None:
         logger.info("Starting CRM user sync")
         try:
-            payload = await self._client.fetch_users()
-            users = decrypt_payload(payload, self._key)
-            logger.info("Decrypted CRM payload", user_count=len(users))
+            page = 1
+            page_size = 100
+            synced_total = 0
 
-            for user in users:
-                await self._db.upsert_user_from_crm(
-                    email=user.email,
-                    role=user.role,
-                    name=user.name,
-                    time_zone=user.time_zone,
-                    contacts=user.contacts,
+            while True:
+                payload = await self._client.fetch_users(page=page, page_size=page_size)
+                users = decrypt_payload(payload, self._key)
+                logger.info(
+                    "Decrypted CRM payload",
+                    user_count=len(users),
+                    page=payload.page,
+                    page_size=payload.page_size,
+                    total=payload.total,
                 )
 
-            logger.info("CRM user sync completed", synced=len(users))
+                for user in users:
+                    await self._db.upsert_user_from_crm(
+                        email=user.email,
+                        role=user.role,
+                        name=user.name,
+                        time_zone=user.time_zone,
+                        contacts=user.contacts,
+                    )
+
+                synced_total += len(users)
+                if payload.page * payload.page_size >= payload.total:
+                    break
+                page += 1
+
+            logger.info("CRM user sync completed", synced=synced_total)
         except Exception:
             logger.exception("CRM user sync failed")
             raise
