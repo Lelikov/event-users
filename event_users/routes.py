@@ -57,7 +57,7 @@ async def update_user(
 @users_router.get("/roles/{role}/emails/{email}", response_model=UserResponse)
 async def get_user_by_email_role(
     controller: FromDishka[IUsersController],
-    role: Literal["client", "volunteer"],
+    role: Literal["client", "organizer"],
     email: str,
 ) -> UserResponse:
     dto = await controller.get_user_by_email_role(email=email, role=role)
@@ -85,8 +85,8 @@ async def list_users(
     controller: FromDishka[IUsersController],
     email: Annotated[str | None, Query(description="Search by email (case-insensitive partial match)")] = None,
     role: Annotated[
-        Literal["client", "volunteer"] | None,
-        Query(description="Filter by role: client or volunteer"),
+        Literal["client", "organizer"] | None,
+        Query(description="Filter by role: client or organizer"),
     ] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,

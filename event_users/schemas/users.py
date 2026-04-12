@@ -69,7 +69,7 @@ class UserContactRequest(BaseModel):
 class CreateUserRequest(BaseModel):
     email: EmailStr
     name: str | None = None
-    role: Literal["client", "volunteer"]
+    role: Literal["client", "organizer"]
     time_zone: str = "Europe/Moscow"
     contacts: list[UserContactRequest] = []
 
@@ -86,7 +86,7 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     email: EmailStr | None = None
     name: str | None = None
-    role: Literal["client", "volunteer"] | None = None
+    role: Literal["client", "organizer"] | None = None
     time_zone: str | None = None
     contacts: list[UserContactRequest] | None = None
 
@@ -109,7 +109,7 @@ class ListUsersResponse(BaseModel):
 
 class ListUsersParams(BaseModel):
     email: str | None = None
-    role: Literal["client", "volunteer"] | None = None
+    role: Literal["client", "organizer"] | None = None
     limit: int = 50
     offset: int = 0
 
