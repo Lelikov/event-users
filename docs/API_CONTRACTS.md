@@ -2,11 +2,14 @@
 
 ## Authentication
 
-All endpoints require a valid JWT Bearer token in the `Authorization` header, verified by `JWTAuthMiddleware` (`middleware.py:12-40`) and optionally re-verified by route-level dependencies (`auth.py:26-46`).
+All endpoints require a valid Bearer token in the `Authorization` header, verified by `BearerAuthMiddleware` (`middleware.py:12-40`) and optionally re-verified by route-level dependencies (`auth.py:26-46`).
 
-- **Token format**: HS256-signed JWT with `sub` (email) and `role` (`admin` | `user`) claims.
-- **Write endpoints** (POST, PUT) additionally require `role=admin` via `require_admin` dependency (`auth.py:49-54`).
-- **Health endpoint** (`/health`) is NOT exempt from JWT middleware -- probes need a token or the middleware must be reconfigured.
+Two accepted token forms:
+- **JWT**: HS256-signed JWT with `sub` (email) and `role` (`admin` | `user`) claims. Signed with `JWT_SECRET_KEY`.
+- **Static API token**: If `API_BEARER_TOKEN` env var is set and the presented token matches it exactly, the request is granted `role=admin` without JWT verification. Intended for service-to-service calls where issuing JWTs is inconvenient.
+
+- **Write endpoints** (POST, PATCH) additionally require `role=admin` via `require_admin` dependency (`auth.py:49-54`).
+- **Health endpoint** (`/health`) IS exempt from `BearerAuthMiddleware` — unauthenticated liveness probes receive `200 {"status": "ok"}`.
 
 ---
 
@@ -56,7 +59,7 @@ Create a new user.
 
 ---
 
-### PUT /api/users/id/{user_id}
+### PATCH /api/users/id/{user_id}
 
 Update an existing user (PATCH semantics -- only non-null fields are updated).
 
@@ -84,6 +87,36 @@ Update an existing user (PATCH semantics -- only non-null fields are updated).
 **Response**: Same `UserResponse` schema.
 
 **Errors**: 404 (user not found), 409 (email+role conflict), 422 (invalid timezone).
+
+---
+
+### POST /api/users/by-ids
+
+Fetch multiple users by a list of UUIDs in a single request.
+
+| Aspect | Detail |
+|--------|--------|
+| Auth | Bearer JWT (any role) |
+| Status | 200 OK |
+| Source | `routes.py` |
+
+**Request body**:
+```json
+{
+  "ids": ["uuid1", "uuid2", "..."]   // required; max 200 entries
+}
+```
+
+**Response**:
+```json
+{
+  "items": [ /* array of UserResponse */ ]
+}
+```
+
+**Errors**: 422 (more than 200 IDs provided or invalid UUID format).
+
+**Notes**: IDs not found in the database are silently omitted from `items`. Order of results is not guaranteed to match order of input `ids`.
 
 ---
 
@@ -170,7 +203,7 @@ Health check endpoint.
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT (middleware does NOT exempt this path) |
+| Auth | None — exempt from `BearerAuthMiddleware` via `public_paths` |
 | Status | 200 OK |
 | Source | `routes.py:117-119` |
 
@@ -179,4 +212,4 @@ Health check endpoint.
 {"status": "ok"}
 ```
 
-**Note**: Currently gated by `JWTAuthMiddleware` -- unauthenticated probes will receive 401. See known limitations in SERVICE_OVERVIEW.md.
+Unauthenticated liveness and readiness probes (Kubernetes, load balancers) receive `200` without providing any token.

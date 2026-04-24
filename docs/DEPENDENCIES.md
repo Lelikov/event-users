@@ -6,6 +6,7 @@
 |------------|------|---------|--------|----------------|
 | **PostgreSQL** | Infrastructure | Persistent storage for users and contacts | `POSTGRES_DSN` | Service fully unavailable -- all reads and writes fail with 500 |
 | **External CRM API** | External service | Source of truth for user data during sync | `CRM_API_URL`, `CRM_API_TOKEN` | Sync stops; local data becomes stale. API endpoints continue serving last-known-good data. No alerting mechanism exists (`crm/sync.py:128-131`). |
+| **event-admin** | Internal service | Cache invalidation — `CacheNotifier` POSTs to event-admin's cache invalidation endpoint after user writes so that event-admin's read cache reflects the latest data | `EVENT_ADMIN_URL`, `EVENT_ADMIN_CACHE_TOKEN` | Cache invalidation silently fails; event-admin may serve stale user data until its cache TTL expires. User writes still succeed. |
 
 ## Provides To
 
@@ -49,18 +50,20 @@
           |  (users DB)  |         |
           +-------------+          |
                                    |
-          +------------------------+-----+
-          |                |             |
-          v                v             v
-  +-----------+   +----------------+  +----------+
-  |  event-   |   | event-admin-   |  | event-   |
-  |  notifier |   | frontend       |  | saver    |
-  +-----------+   +----------------+  | (FK ref) |
-                                      +----------+
+          +------------------------+-----+------------------+
+          |                |             |                  |
+          v                v             v                  v
+  +-----------+   +----------------+  +----------+  +------------+
+  |  event-   |   | event-admin-   |  | event-   |  | event-     |
+  |  notifier |   | frontend       |  | saver    |  | admin      |
+  +-----------+   +----------------+  | (FK ref) |  | (cache     |
+                                      +----------+  | invalidate)|
+                                                    +------------+
 ```
 
 ## Network and Authentication
 
-- **Inbound**: All API consumers must provide a valid JWT Bearer token (HS256, signed with `JWT_SECRET_KEY`). Write operations require `role=admin` in the token.
+- **Inbound**: All API consumers must provide a valid Bearer token. Accepted forms: HS256-signed JWT (`JWT_SECRET_KEY`) or a static API token (`API_BEARER_TOKEN`). Write operations require `role=admin`. `/health` is exempt.
 - **Outbound (CRM)**: Bearer token authentication (`CRM_API_TOKEN`). Response payloads are AES-256-CBC encrypted.
+- **Outbound (event-admin)**: `CacheNotifier` sends a POST request to event-admin's cache invalidation endpoint using `EVENT_ADMIN_CACHE_TOKEN` as the bearer token. Called after any user write operation.
 - **Database**: Standard PostgreSQL connection via async DSN. Connection pool: 10 base + 20 overflow (`ioc.py:38-43`).

@@ -29,7 +29,7 @@ Recommendation:
 
 ---
 
-[CRITICAL] Default JWT secret is a hardcoded development string shipped in config
+[CRITICAL] Default JWT secret is a hardcoded development string shipped in config — **FIXED**
 
 Services affected: event-users (all authenticated endpoints)
 Location: `event-users/event_users/config.py:15`
@@ -37,9 +37,7 @@ Description: `jwt_secret_key` has a default value of `"dev-jwt-secret-change-in-
 
 The field is not declared `strict=True` or made required (no `Field(...)` without a default), so Pydantic will never raise at startup.
 
-Recommendation:
-1. Remove the default: `jwt_secret_key: str = Field(strict=True)` — this forces the app to crash at startup rather than run insecurely.
-2. Add a startup assertion or validator that checks the key length is at least 32 characters.
+**Resolution**: Field changed to `jwt_secret_key: str = Field(...)` — no default value. Pydantic now raises a `ValidationError` at startup if the variable is absent, preventing silent insecure startup.
 
 ---
 
@@ -65,7 +63,7 @@ Recommendation:
 
 ---
 
-[HIGH] No backoff on CRM sync errors; 10-second default interval is not 5 minutes
+[HIGH] No backoff on CRM sync errors; 10-second default interval is not 5 minutes — **PARTIALLY FIXED**
 
 Services affected: event-users, CRM API (external)
 Location: `event-users/event_users/crm/sync.py:117-132` (`CrmSyncRunner.run`), `event-users/event_users/config.py:38`
@@ -73,10 +71,13 @@ Description: Two issues:
 1. `crm_sync_interval_seconds` defaults to `10` (line 38 of `config.py`), not 300 (5 minutes) as documented in CLAUDE.md and the service summary. If `.env` is not configured, syncs fire every 10 seconds, hammering the CRM API and the database continuously.
 2. There is no exponential backoff on repeated errors. A transient CRM outage will cause the loop to retry at the same cadence indefinitely. With a 10-second interval and no backoff, a 1-hour CRM outage generates ~360 failed HTTP requests, all logged as exceptions — flooding log storage and potentially triggering rate-limits or bans from the CRM API.
 
-Recommendation:
-1. Fix the default: `crm_sync_interval_seconds: int = 300`.
-2. Implement exponential backoff with jitter on consecutive failures (e.g., double the interval up to a max of 30 minutes).
-3. Add a `consecutive_failures` counter; alert if it exceeds a threshold.
+**Resolution (partial)**:
+- Issue 1 — **FIXED**: Default changed to `crm_sync_interval_seconds: int = 300`. Comment updated to `# default: 5 minutes`.
+- Issue 2 — **OPEN**: Exponential backoff with jitter is not yet implemented. Repeated CRM failures still retry at the fixed interval. See recommendation below.
+
+Recommendation (remaining):
+- Implement exponential backoff with jitter on consecutive failures (e.g., double the interval up to a max of 30 minutes).
+- Add a `consecutive_failures` counter; alert if it exceeds a threshold.
 
 ---
 
@@ -144,7 +145,7 @@ Recommendation: Decide on the intended contract: if the CRM is the source of tru
 
 ---
 
-[MEDIUM] `crm_encryption_key` stored as hex string, parsed at provider startup — no validation of key length
+[MEDIUM] `crm_encryption_key` stored as hex string, parsed at provider startup — no validation of key length — **FIXED**
 
 Services affected: event-users (CRM sync)
 Location: `event-users/event_users/ioc.py:101`
@@ -154,7 +155,7 @@ Description: `bytes.fromhex(settings.crm_encryption_key)` is called at DI contai
 
 A misconfigured key will not surface until the first sync attempt, which may happen minutes after startup, making root cause analysis harder.
 
-Recommendation: Add a `field_validator` on `crm_encryption_key` in `Settings` that validates the hex string is well-formed and decodes to exactly 32 bytes. Fail fast at startup.
+**Resolution**: A `field_validator` was added to `Settings.crm_encryption_key` that validates the string is valid hex and decodes to exactly 32 bytes. Startup now fails fast with a clear error if the key is malformed or wrong-length.
 
 ---
 
@@ -182,13 +183,13 @@ Recommendation: Either rename the endpoint/method to `PATCH`, or change the upda
 
 ---
 
-[LOW] CORS is wide open (`allow_origins=["*"]` with `allow_credentials=True`)
+[LOW] CORS is wide open (`allow_origins=["*"]` with `allow_credentials=True`) — **FIXED**
 
 Services affected: event-users
 Location: `event-users/event_users/main.py:59-65`
 Description: `allow_origins=["*"]` combined with `allow_credentials=True` is technically forbidden by the CORS spec (browsers refuse credentials with wildcard origins), so this configuration is both overly permissive and broken for credential-bearing cross-origin requests. The combination will cause browser CORS errors for any frontend that sends cookies or Authorization headers in a cross-origin context.
 
-Recommendation: Set `allow_origins` to an explicit list of trusted origins (e.g., the admin frontend domain). Remove `allow_credentials=True` if credentials are not needed cross-origin, or keep it with explicit origins.
+**Resolution**: `allow_origins` is now configurable via the `CORS_ORIGINS` env var (comma-separated list). A safe default (e.g., `["http://localhost:3000"]`) is used when the variable is not set, replacing the wildcard.
 
 ---
 
@@ -222,23 +223,23 @@ Recommendation: Add `Index("ix_user_contacts_channel", "channel")` if channel-ba
 
 ---
 
-[LOW] `health` endpoint is protected by JWT middleware — liveness probes will fail without a token
+[LOW] `health` endpoint is protected by JWT middleware — liveness probes will fail without a token — **FIXED**
 
 Services affected: event-users (operations/Kubernetes)
 Location: `event-users/event_users/main.py:58`, `event-users/event_users/middleware.py:23-24`
 Description: `JWTAuthMiddleware` is registered with an empty `public_paths` frozenset. The `/health` route is included in `root_router` but is not exempt. Any unauthenticated liveness probe (Kubernetes, load balancer, uptime checker) will receive a `401 Missing bearer token` response instead of `200 {"status": "ok"}`. This could trigger false restarts of a healthy pod.
 
-Recommendation: Pass `public_paths=frozenset({"/health"})` when instantiating `JWTAuthMiddleware`, or register `/health` before the middleware is applied.
+**Resolution**: `BearerAuthMiddleware` is now instantiated with `public_paths=frozenset({"/health"})`. Unauthenticated requests to `/health` are passed through without token validation.
 
 ---
 
-[LOW] `crm_sync_interval_seconds` comment says "5 minutes" but default is 10 seconds
+[LOW] `crm_sync_interval_seconds` comment says "5 minutes" but default is 10 seconds — **FIXED**
 
 Services affected: event-users (operations documentation)
 Location: `event-users/event_users/config.py:38`
 Description: `crm_sync_interval_seconds: int = 10  # 5 minutes` — the comment contradicts the value. This is almost certainly a copy-paste or development leftover, but it means production deployments without an explicit `.env` setting will sync every 10 seconds, not every 5 minutes. (This overlaps with the HIGH finding on backoff, but the comment-vs-value mismatch warrants its own entry.)
 
-Recommendation: Set `crm_sync_interval_seconds: int = 300` and update the comment to `# default: 5 minutes`.
+**Resolution**: Default changed to `crm_sync_interval_seconds: int = 300` with comment updated to `# default: 5 minutes`. Covered by the PARTIALLY FIXED HIGH finding above.
 
 ---
 
@@ -254,8 +255,8 @@ Recommendation: Set `crm_sync_interval_seconds: int = 300` and update the commen
 
 ### Top 3 Concerns
 
-1. **CRITICAL — Hardcoded JWT default secret (`config.py:15`)**: A missing or unset `JWT_SECRET_KEY` in production silently enables token forgery for all roles including admin. This is the highest-priority fix before any production deployment.
+1. **CRITICAL — Unhandled AES decryption exceptions cause silent partial syncs (`crm/sync.py:30-55`, `sync.py:82-89`)**: A wrong key or malformed CRM payload crashes mid-sync with no partial-sync detection, no alerting, and no rollback — leaving the user DB silently stale. Combined with the row-by-row commit pattern, partial data can persist indefinitely. **Still open.**
 
-2. **CRITICAL — Unhandled AES decryption exceptions cause silent partial syncs (`crm/sync.py:30-55`, `sync.py:82-89`)**: A wrong key or malformed CRM payload crashes mid-sync with no partial-sync detection, no alerting, and no rollback — leaving the user DB silently stale. Combined with the row-by-row commit pattern, partial data can persist indefinitely.
+2. **HIGH — Row-by-row non-transactional upsert + `SqlExecutor.execute` auto-commits (`adapters/sql.py:25`, `adapters/users_db.py:215-247`)**: Every write commits immediately. A failure mid-operation (user inserted, contacts not yet written) leaves the DB in an inconsistent state that the session rollback in `ioc.py` cannot undo. This affects both CRM sync and the API create/update paths. **Still open.**
 
-3. **HIGH — Row-by-row non-transactional upsert + `SqlExecutor.execute` auto-commits (`adapters/sql.py:25`, `adapters/users_db.py:215-247`)**: Every write commits immediately. A failure mid-operation (user inserted, contacts not yet written) leaves the DB in an inconsistent state that the session rollback in `ioc.py` cannot undo. This affects both CRM sync and the API create/update paths.
+3. **HIGH — No exponential backoff on CRM sync errors (`crm/sync.py:117-132`)**: The interval default (300 s) is now fixed, but repeated failures still retry at the same cadence with no backoff, risking CRM rate-limits during outages. **Still open.**

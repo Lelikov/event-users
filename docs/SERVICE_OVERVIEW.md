@@ -37,6 +37,7 @@ Each user may have zero or more contacts. A contact is a `(channel, contact_id)`
 |------------|---------|------------|
 | PostgreSQL (asyncpg) | User/contact storage | `POSTGRES_DSN` |
 | External CRM API | Source of truth for user data (when sync enabled) | `CRM_API_URL`, `CRM_API_TOKEN` |
+| event-admin | Cache invalidation notifications (outbound POST) | `EVENT_ADMIN_URL`, `EVENT_ADMIN_CACHE_TOKEN` |
 
 ## Environment Variables
 
@@ -45,11 +46,15 @@ Each user may have zero or more contacts. A contact is a `(channel, contact_id)`
 | `POSTGRES_DSN` | Yes | -- | PostgreSQL connection string (async) |
 | `JWT_SECRET_KEY` | Yes | -- | HS256 secret for JWT verification |
 | `JWT_ALGORITHM` | No | `HS256` | JWT algorithm |
+| `API_BEARER_TOKEN` | No | -- | Static bearer token granting `role=admin` (alternative to JWT for service-to-service calls) |
+| `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated list of allowed CORS origins |
 | `CRM_API_URL` | Yes | -- | Base URL of CRM API |
 | `CRM_API_TOKEN` | Yes | -- | Bearer token for CRM API |
 | `CRM_ENCRYPTION_KEY` | Yes | -- | 64-char hex string (32-byte AES-256 key) |
 | `IS_SYNC_ENABLED` | No | `false` | Enable/disable CRM background sync |
 | `CRM_SYNC_INTERVAL_SECONDS` | No | `300` | Seconds between sync cycles |
+| `EVENT_ADMIN_URL` | No | -- | Base URL of event-admin service for cache invalidation |
+| `EVENT_ADMIN_CACHE_TOKEN` | No | -- | Bearer token for event-admin cache invalidation endpoint |
 | `DEBUG` | No | `false` | Enable debug mode / console log renderer |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
 
@@ -60,9 +65,11 @@ Source: `config.py:5-38`
 1. **No test coverage** -- no `tests/` directory exists. CRM decryption, auth middleware, and upsert idempotency are untested (`audit:HIGH`).
 2. **CRM decryption errors are unhandled** -- wrong key, bad base64, or corrupted payload crashes the sync iteration; outer loop swallows exception with no alerting (`audit:CRITICAL`, `crm/sync.py:30-55`).
 3. **Partial CRM sync** -- each user is upserted in a separate implicit transaction; a failure mid-page leaves committed partial data with no detection mechanism (`audit:HIGH`, `adapters/users_db.py:228-258`).
-4. **No exponential backoff** -- repeated CRM failures retry at the same fixed interval (`crm/sync.py:117-132`).
+4. **No exponential backoff** -- repeated CRM failures retry at the same fixed interval, now 300 s (`crm/sync.py:117-132`). Interval default fixed; backoff not yet implemented.
 5. **COALESCE in upsert prevents clearing fields** -- CRM-sent nulls for `name`/`time_zone` are silently ignored (`adapters/users_db.py:242-243`).
-6. **CORS wildcard with credentials** -- `allow_origins=["*"]` + `allow_credentials=True` is spec-invalid (`main.py:59-65`).
-7. **Double JWT validation** -- middleware + route dependency decode token independently; not DRY (`middleware.py` + `auth.py`).
-8. **Health endpoint requires JWT** -- liveness probes without a token receive 401 (`main.py:58`, `middleware.py:19`).
-9. **`httpx.AsyncClient` created per CRM page** -- no connection reuse across pages or sync cycles (`crm/client.py:25`).
+6. **Double JWT validation** -- middleware + route dependency decode token independently; not DRY (`middleware.py` + `auth.py`).
+7. **`httpx.AsyncClient` created per CRM page** -- no connection reuse across pages or sync cycles (`crm/client.py:25`).
+
+The following previously listed limitations have been resolved:
+- ~~CORS wildcard with credentials~~ — `CORS_ORIGINS` env var; safe default replaces wildcard.
+- ~~Health endpoint requires JWT~~ — `/health` is now in `public_paths` of `BearerAuthMiddleware`.
