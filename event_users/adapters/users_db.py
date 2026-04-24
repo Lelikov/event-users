@@ -205,12 +205,56 @@ class UsersDBAdapter:
             values,
         )
 
-        users: list[UserDTO] = []
-        for row in rows:
-            contacts = await self._fetch_contacts(row["id"])
-            users.append(_user_from_row(row, contacts))
+        user_ids = [row["id"] for row in rows]
+        contacts_by_user: dict[uuid.UUID, list[UserContactDTO]] = {uid: [] for uid in user_ids}
+
+        if user_ids:
+            contact_rows = await self._sql.fetch_all(
+                """
+                SELECT id, user_id, channel, contact_id, created_at, updated_at
+                FROM user_contacts
+                WHERE user_id = ANY(:ids)
+                ORDER BY channel
+                """,
+                {"ids": user_ids},
+            )
+            for cr in contact_rows:
+                contacts_by_user[cr["user_id"]].append(_contact_from_row(cr))
+
+        users: list[UserDTO] = [_user_from_row(row, contacts_by_user[row["id"]]) for row in rows]
 
         return users, total
+
+    async def get_users_by_ids(self, user_ids: list[uuid.UUID]) -> list[UserDTO]:
+        if not user_ids:
+            return []
+
+        rows = await self._sql.fetch_all(
+            """
+            SELECT id, email, name, role, time_zone, created_at, updated_at
+            FROM users
+            WHERE id = ANY(:ids)
+            """,
+            {"ids": user_ids},
+        )
+
+        found_ids = [row["id"] for row in rows]
+        contacts_by_user: dict[uuid.UUID, list[UserContactDTO]] = {uid: [] for uid in found_ids}
+
+        if found_ids:
+            contact_rows = await self._sql.fetch_all(
+                """
+                SELECT id, user_id, channel, contact_id, created_at, updated_at
+                FROM user_contacts
+                WHERE user_id = ANY(:ids)
+                ORDER BY channel
+                """,
+                {"ids": found_ids},
+            )
+            for cr in contact_rows:
+                contacts_by_user[cr["user_id"]].append(_contact_from_row(cr))
+
+        return [_user_from_row(row, contacts_by_user[row["id"]]) for row in rows]
 
     async def upsert_user_from_crm(
         self,
@@ -220,6 +264,9 @@ class UsersDBAdapter:
         name: str | None = None,
         contacts: list[CreateUserContactDTO] | None = None,
     ) -> None:
+        # COALESCE preserves existing values when CRM sends NULL. This is intentional:
+        # CRM null means "not provided", not "clear this field".
+        # If CRM semantics change, switch to direct assignment.
         await self._sql.execute(
             """
             INSERT INTO users (email, name, role, time_zone)

@@ -12,7 +12,10 @@ class Settings(BaseSettings):
 
     debug: bool = False
     log_level: str = "INFO"
-    api_bearer_token: str = Field(default="dev-token", strict=True)
+    jwt_secret_key: str = Field(...)
+    jwt_algorithm: str = "HS256"
+    api_bearer_token: str | None = None
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     @field_validator("log_level")
     @classmethod
@@ -34,4 +37,19 @@ class Settings(BaseSettings):
     # AES-256 key as hex string (64 hex chars = 32 bytes)
     crm_encryption_key: str = Field(strict=True)
 
-    crm_sync_interval_seconds: int = 10  # 5 minutes
+    @field_validator("crm_encryption_key")
+    @classmethod
+    def validate_encryption_key(cls, v: str) -> str:
+        try:
+            key_bytes = bytes.fromhex(v)
+        except ValueError as err:
+            raise ValueError("crm_encryption_key must be valid hex") from err
+        if len(key_bytes) != 32:
+            raise ValueError(f"crm_encryption_key must decode to 32 bytes (AES-256), got {len(key_bytes)}")
+        return v
+
+    crm_sync_interval_seconds: int = 300  # 5 minutes
+
+    # event-admin cache invalidation
+    event_admin_url: str = ""
+    event_admin_cache_token: str = ""

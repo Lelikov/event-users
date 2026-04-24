@@ -34,3 +34,6 @@ class UsersController:
 
     async def list_users(self, query: ListUsersQueryDTO) -> tuple[list[UserDTO], int]:
         return await self._db.list_users(query)
+
+    async def get_users_by_ids(self, user_ids: list[uuid.UUID]) -> list[UserDTO]:
+        return await self._db.get_users_by_ids(user_ids)

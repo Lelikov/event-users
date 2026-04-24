@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import structlog
 from dishka import Provider, Scope, provide
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -9,12 +10,14 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from event_users.adapters.cache_notifier import CacheNotifier
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
 from event_users.config import Settings
 from event_users.controllers.users import UsersController
 from event_users.crm.client import CrmClient
 from event_users.crm.sync import CrmSyncRunner
+from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.sql import ISqlExecutor, ISqlExecutorFactory
 from event_users.interfaces.users import IUsersController, IUsersDBAdapter
 
@@ -106,3 +109,10 @@ class AppProvider(Provider):
             encryption_key=encryption_key,
             interval=settings.crm_sync_interval_seconds,
         )
+
+    # ========== event-admin cache invalidation ==========
+
+    @provide(scope=Scope.APP)
+    async def provide_cache_notifier(self, settings: Settings) -> AsyncGenerator[ICacheNotifier]:
+        async with AsyncClient(base_url=settings.event_admin_url, timeout=10) as client:
+            yield CacheNotifier(http_client=client, token=settings.event_admin_cache_token)

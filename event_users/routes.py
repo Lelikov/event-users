@@ -5,11 +5,14 @@ import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from event_users.auth import verify_bearer_token
+from event_users.auth import require_admin
 from event_users.errors import ConflictError
+from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.users import IUsersController
 from event_users.schemas.users import (
     CreateUserRequest,
+    GetUsersByIdsRequest,
+    GetUsersByIdsResponse,
     ListUsersParams,
     ListUsersResponse,
     UpdateUserRequest,
@@ -19,14 +22,21 @@ from event_users.schemas.users import (
 
 logger = structlog.get_logger(__name__)
 
-root_router = APIRouter(route_class=DishkaRoute, dependencies=[Depends(verify_bearer_token)])
+# Auth enforced globally by JWTAuthMiddleware; write routes additionally require admin role.
+root_router = APIRouter(route_class=DishkaRoute)
 users_router = APIRouter(prefix="/api/users", tags=["users"], route_class=DishkaRoute)
 
 
-@users_router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@users_router.post(
+    "",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
 async def create_user(
     body: CreateUserRequest,
     controller: FromDishka[IUsersController],
+    notifier: FromDishka[ICacheNotifier],
 ) -> UserResponse:
     try:
         dto = await controller.create_user(body.to_dto())
@@ -34,14 +44,20 @@ async def create_user(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    await notifier.invalidate()
     return UserResponse.from_dto(dto)
 
 
-@users_router.put("/id/{user_id}", response_model=UserResponse)
+@users_router.patch(
+    "/id/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def update_user(
     user_id: uuid.UUID,
     body: UpdateUserRequest,
     controller: FromDishka[IUsersController],
+    notifier: FromDishka[ICacheNotifier],
 ) -> UserResponse:
     try:
         dto = await controller.update_user(user_id, body.to_dto())
@@ -51,7 +67,23 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     if dto is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
+    await notifier.invalidate()
     return UserResponse.from_dto(dto)
+
+
+@users_router.post("/by-ids", response_model=GetUsersByIdsResponse)
+async def get_users_by_ids(
+    body: GetUsersByIdsRequest,
+    controller: FromDishka[IUsersController],
+) -> GetUsersByIdsResponse:
+    if len(body.ids) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Maximum 200 IDs per request",
+        )
+    unique_ids = list(set(body.ids))
+    items = await controller.get_users_by_ids(unique_ids)
+    return GetUsersByIdsResponse(items=[UserResponse.from_dto(u) for u in items])
 
 
 @users_router.get("/roles/{role}/emails/{email}", response_model=UserResponse)

@@ -22,7 +22,6 @@ class SqlExecutor:
 
     async def execute(self, query: str, values: dict) -> None:
         await self.session.execute(text(query), values)
-        await self.session.commit()
 
     async def execute_in_transaction(self, statements: list[tuple[str, dict]]) -> None:
         if self.session.in_transaction():

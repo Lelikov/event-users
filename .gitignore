@@ -141,3 +141,5 @@ debug/**
 pyrightconfig.json
 /opensearch_data/
 postgres_data/
+# Added by code-review-graph
+.code-review-graph/

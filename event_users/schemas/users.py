@@ -100,6 +100,14 @@ class UpdateUserRequest(BaseModel):
         )
 
 
+class GetUsersByIdsRequest(BaseModel):
+    ids: list[uuid.UUID]
+
+
+class GetUsersByIdsResponse(BaseModel):
+    items: list[UserResponse]
+
+
 class ListUsersResponse(BaseModel):
     items: list[UserResponse]
     total: int
