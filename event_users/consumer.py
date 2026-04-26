@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import structlog
 from aio_pika import IncomingMessage
-from cloudevents.http import from_http
+from cloudevents.v1.http.conversion import from_http
 from faststream.rabbit import RabbitBroker, RabbitQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
