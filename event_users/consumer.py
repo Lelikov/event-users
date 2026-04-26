@@ -2,9 +2,9 @@
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
-from cloudevents.v1.http.conversion import from_http
 from faststream.rabbit import RabbitBroker, RabbitMessage, RabbitQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -111,22 +111,16 @@ class EmailChangeConsumer:
 
     async def start(self) -> None:
         @self._broker.subscriber(self._queue)
-        async def on_message(body: bytes, msg: RabbitMessage) -> None:
-            try:
-                event = from_http(
-                    headers=dict(msg.headers or {}),
-                    data=body,
-                )
-            except Exception:
-                logger.exception("Failed to parse CloudEvent from message")
-                raise
+        async def on_message(data: dict[str, Any], msg: RabbitMessage) -> None:
+            headers = msg.headers or {}
+            event_type = headers.get("ce-type", "")
 
-            event_type = event["type"]
             if event_type != "user.email.change_requested":
                 logger.warning("Unknown event type, skipping", event_type=event_type)
                 return
 
-            data = event.data or {}
+            # CloudEvents binary mode: data is the deserialized JSON body,
+            # event metadata is in AMQP headers (ce-type, ce-source, etc.)
             await handle_email_change(
                 sessionmaker=self._sessionmaker,
                 user_id_str=data["user_id"],
