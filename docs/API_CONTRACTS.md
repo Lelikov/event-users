@@ -197,6 +197,44 @@ This returns the matching user with their contact channels (telegram, push, emai
 
 ---
 
+### GET /api/users/{user_id}/email-changelog
+
+Получить историю изменений email для конкретного пользователя.
+
+| Aspect | Detail |
+|--------|--------|
+| Auth | Bearer JWT (any role) |
+| Status | 200 OK |
+
+**Path params**: `user_id` (UUID)
+
+**Query params**:
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int (1-500) | 50 | Размер страницы |
+| `offset` | int (>=0) | 0 | Смещение для пагинации |
+
+**Response**:
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "old_email": "old@example.com",
+      "new_email": "new@example.com",
+      "changed_by": "admin@example.com",
+      "changed_at": "2026-04-26T12:00:00Z"
+    }
+  ],
+  "total": 3
+}
+```
+
+**Errors**: 404 (пользователь не найден).
+
+---
+
 ### GET /health
 
 Health check endpoint.
