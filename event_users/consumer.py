@@ -119,14 +119,14 @@ class EmailChangeConsumer:
                 logger.warning("Unknown event type, skipping", event_type=event_type)
                 return
 
-            # CloudEvents binary mode: data is the deserialized JSON body,
-            # event metadata is in AMQP headers (ce-type, ce-source, etc.)
+            # event-receiver wraps payload in {"original": {...}, "normalized": {...}}
+            original = data.get("original", data)
             await handle_email_change(
                 sessionmaker=self._sessionmaker,
-                user_id_str=data["user_id"],
-                old_email=data["old_email"],
-                new_email=data["new_email"],
-                requested_by=data["requested_by"],
+                user_id_str=original["user_id"],
+                old_email=original["old_email"],
+                new_email=original["new_email"],
+                requested_by=original["requested_by"],
             )
 
         await self._broker.start()
