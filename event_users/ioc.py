@@ -24,6 +24,8 @@ from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.changelog import IEmailChangelogDBAdapter
 from event_users.interfaces.sql import ISqlExecutor, ISqlExecutorFactory
 from event_users.interfaces.users import IUsersController, IUsersDBAdapter
+from event_users.webhook.client import CrmWebhookClient
+from event_users.webhook.sender import WebhookOutboxSender
 
 
 logger = structlog.get_logger(__name__)
@@ -138,3 +140,24 @@ class AppProvider(Provider):
         sessionmaker: async_sessionmaker[AsyncSession],
     ) -> EmailChangeConsumer:
         return EmailChangeConsumer(broker=broker, sessionmaker=sessionmaker)
+
+    # ========== CRM webhook outbox ==========
+
+    @provide(scope=Scope.APP)
+    async def provide_webhook_client(self, settings: Settings) -> AsyncGenerator[CrmWebhookClient]:
+        async with AsyncClient(base_url=settings.crm_webhook_url, timeout=30) as client:
+            yield CrmWebhookClient(http_client=client, token=settings.crm_webhook_token)
+
+    @provide(scope=Scope.APP)
+    def provide_webhook_sender(
+        self,
+        settings: Settings,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        webhook_client: CrmWebhookClient,
+    ) -> WebhookOutboxSender:
+        return WebhookOutboxSender(
+            sessionmaker=sessionmaker,
+            webhook_client=webhook_client,
+            poll_interval=settings.webhook_poll_interval_seconds,
+            batch_size=settings.webhook_batch_size,
+        )

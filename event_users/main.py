@@ -17,6 +17,7 @@ from event_users.ioc import AppProvider
 from event_users.logger import setup_logger
 from event_users.middleware import BearerAuthMiddleware
 from event_users.routes import root_router
+from event_users.webhook.sender import WebhookOutboxSender
 
 
 container = make_async_container(AppProvider(), FastapiProvider())
@@ -49,6 +50,12 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         await email_consumer.start()
         logger.info("Email change consumer started")
 
+    webhook_task = None
+    if settings.is_webhook_enabled:
+        webhook_sender = await container.get(WebhookOutboxSender)
+        webhook_task = asyncio.create_task(webhook_sender.run(), name="webhook-outbox")
+        logger.info("Webhook outbox sender started")
+
     yield
 
     logger.info("Shutting down event-users application")
@@ -58,6 +65,10 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
             await sync_task
     if email_consumer is not None:
         await email_consumer.stop()
+    if webhook_task is not None:
+        webhook_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await webhook_task
     await container.close()
     logger.info("Event-users application shutdown complete")
 

@@ -57,3 +57,10 @@ class Settings(BaseSettings):
     # RabbitMQ consumer
     rabbit_url: str = "amqp://guest:guest@localhost:5672/"
     is_consumer_enabled: bool = False
+
+    # CRM webhook
+    crm_webhook_url: str = ""
+    crm_webhook_token: str = ""
+    is_webhook_enabled: bool = False
+    webhook_poll_interval_seconds: int = 1
+    webhook_batch_size: int = 10
