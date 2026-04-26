@@ -4,9 +4,8 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from aio_pika import IncomingMessage
 from cloudevents.v1.http.conversion import from_http
-from faststream.rabbit import RabbitBroker, RabbitQueue
+from faststream.rabbit import RabbitBroker, RabbitMessage, RabbitQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
@@ -112,11 +111,11 @@ class EmailChangeConsumer:
 
     async def start(self) -> None:
         @self._broker.subscriber(self._queue)
-        async def on_message(message: IncomingMessage) -> None:
+        async def on_message(body: bytes, msg: RabbitMessage) -> None:
             try:
                 event = from_http(
-                    headers=dict(message.headers or {}),
-                    data=message.body,
+                    headers=dict(msg.headers or {}),
+                    data=body,
                 )
             except Exception:
                 logger.exception("Failed to parse CloudEvent from message")
