@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import structlog
 from dishka import Provider, Scope, provide
+from faststream.rabbit import RabbitBroker
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -15,6 +16,7 @@ from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
 from event_users.config import Settings
+from event_users.consumer import EmailChangeConsumer
 from event_users.controllers.users import UsersController
 from event_users.crm.client import CrmClient
 from event_users.crm.sync import CrmSyncRunner
@@ -122,3 +124,17 @@ class AppProvider(Provider):
     async def provide_cache_notifier(self, settings: Settings) -> AsyncGenerator[ICacheNotifier]:
         async with AsyncClient(base_url=settings.event_admin_url, timeout=10) as client:
             yield CacheNotifier(http_client=client, token=settings.event_admin_cache_token)
+
+    # ========== RabbitMQ consumer ==========
+
+    @provide(scope=Scope.APP)
+    def provide_rabbit_broker(self, settings: Settings) -> RabbitBroker:
+        return RabbitBroker(str(settings.rabbit_url))
+
+    @provide(scope=Scope.APP)
+    def provide_email_change_consumer(
+        self,
+        broker: RabbitBroker,
+        sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> EmailChangeConsumer:
+        return EmailChangeConsumer(broker=broker, sessionmaker=sessionmaker)

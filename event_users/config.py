@@ -53,3 +53,7 @@ class Settings(BaseSettings):
     # event-admin cache invalidation
     event_admin_url: str = ""
     event_admin_cache_token: str = ""
+
+    # RabbitMQ consumer
+    rabbit_url: str = "amqp://guest:guest@localhost:5672/"
+    is_consumer_enabled: bool = False
