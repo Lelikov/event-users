@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
+from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.sql import ISqlExecutor
 
 
@@ -19,6 +20,7 @@ logger = structlog.get_logger(__name__)
 async def handle_email_change(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    cache_notifier: ICacheNotifier,
     user_id_str: str,
     old_email: str,
     new_email: str,
@@ -73,6 +75,7 @@ async def handle_email_change(
             )
 
             await session.commit()
+            await cache_notifier.invalidate()
             logger.info(
                 "Email change processed",
                 user_id=user_id_str,
@@ -96,9 +99,11 @@ class EmailChangeConsumer:
         *,
         broker: RabbitBroker,
         sessionmaker: async_sessionmaker[AsyncSession],
+        cache_notifier: ICacheNotifier,
     ) -> None:
         self._broker = broker
         self._sessionmaker = sessionmaker
+        self._cache_notifier = cache_notifier
         self._queue = RabbitQueue(
             "events.user.email",
             durable=True,
@@ -123,6 +128,7 @@ class EmailChangeConsumer:
             original = data.get("original", data)
             await handle_email_change(
                 sessionmaker=self._sessionmaker,
+                cache_notifier=self._cache_notifier,
                 user_id_str=original["user_id"],
                 old_email=original["old_email"],
                 new_email=original["new_email"],

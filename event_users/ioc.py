@@ -138,8 +138,9 @@ class AppProvider(Provider):
         self,
         broker: RabbitBroker,
         sessionmaker: async_sessionmaker[AsyncSession],
+        cache_notifier: ICacheNotifier,
     ) -> EmailChangeConsumer:
-        return EmailChangeConsumer(broker=broker, sessionmaker=sessionmaker)
+        return EmailChangeConsumer(broker=broker, sessionmaker=sessionmaker, cache_notifier=cache_notifier)
 
     # ========== CRM webhook outbox ==========
 
