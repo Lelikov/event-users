@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
 from event_users.crm.client import CrmClient, EncryptedUsersPayload
@@ -56,9 +57,16 @@ def decrypt_payload(payload: EncryptedUsersPayload, key: bytes) -> list[CrmUser]
 
 
 class CrmSyncService:
-    def __init__(self, crm_client: CrmClient, db_adapter: IUsersDBAdapter, encryption_key: bytes) -> None:
+    def __init__(
+        self,
+        crm_client: CrmClient,
+        db_adapter: IUsersDBAdapter,
+        changelog_adapter: EmailChangelogDBAdapter,
+        encryption_key: bytes,
+    ) -> None:
         self._client = crm_client
         self._db = db_adapter
+        self._changelog = changelog_adapter
         self._key = encryption_key
 
     async def sync(self) -> None:
@@ -80,6 +88,14 @@ class CrmSyncService:
                 )
 
                 for user in users:
+                    # Skip users whose email was changed by admin (prevents duplicate creation)
+                    if await self._changelog.is_email_changed_by_admin(user.email, user.role):
+                        logger.info(
+                            "Skipping CRM upsert: email was changed by admin",
+                            email=user.email,
+                            role=user.role,
+                        )
+                        continue
                     await self._db.upsert_user_from_crm(
                         email=user.email,
                         role=user.role,
@@ -118,10 +134,13 @@ class CrmSyncRunner:
         while True:
             try:
                 async with self._sessionmaker() as session:
-                    db_adapter = UsersDBAdapter(sql_executor=SqlExecutor(session))
+                    sql_executor = SqlExecutor(session)
+                    db_adapter = UsersDBAdapter(sql_executor=sql_executor)
+                    changelog_adapter = EmailChangelogDBAdapter(sql_executor=sql_executor)
                     service = CrmSyncService(
                         crm_client=self._client,
                         db_adapter=db_adapter,
+                        changelog_adapter=changelog_adapter,
                         encryption_key=self._key,
                     )
                     await service.sync()

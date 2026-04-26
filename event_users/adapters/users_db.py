@@ -269,13 +269,14 @@ class UsersDBAdapter:
         # If CRM semantics change, switch to direct assignment.
         await self._sql.execute(
             """
-            INSERT INTO users (email, name, role, time_zone)
-            VALUES (:email, :name, :role, :time_zone)
+            INSERT INTO users (email, name, role, time_zone, email_source)
+            VALUES (:email, :name, :role, :time_zone, 'crm')
             ON CONFLICT (email, role)
             DO UPDATE SET
                 name = COALESCE(EXCLUDED.name, users.name),
                 time_zone = COALESCE(EXCLUDED.time_zone, users.time_zone),
                 updated_at = now()
+            WHERE users.email_source != 'admin'
             """,
             {"email": email, "name": name, "role": role, "time_zone": time_zone},
         )
