@@ -120,7 +120,7 @@ class EmailChangeConsumer:
                 )
             except Exception:
                 logger.exception("Failed to parse CloudEvent from message")
-                return
+                raise
 
             event_type = event["type"]
             if event_type != "user.email.change_requested":

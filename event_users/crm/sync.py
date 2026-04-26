@@ -13,6 +13,7 @@ from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
 from event_users.crm.client import CrmClient, EncryptedUsersPayload
 from event_users.dto.users import CreateUserContactDTO
+from event_users.interfaces.changelog import IEmailChangelogDBAdapter
 from event_users.interfaces.users import IUsersDBAdapter
 
 
@@ -61,7 +62,7 @@ class CrmSyncService:
         self,
         crm_client: CrmClient,
         db_adapter: IUsersDBAdapter,
-        changelog_adapter: EmailChangelogDBAdapter,
+        changelog_adapter: IEmailChangelogDBAdapter,
         encryption_key: bytes,
     ) -> None:
         self._client = crm_client
