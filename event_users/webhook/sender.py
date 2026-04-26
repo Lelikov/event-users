@@ -123,4 +123,4 @@ class WebhookOutboxSender:
                             next_retry_seconds=delay_seconds,
                         )
 
-            await session.commit()
+                await session.commit()
