@@ -96,7 +96,7 @@ class EmailChangelogDBAdapter:
         await self._sql.execute(
             """
             INSERT INTO webhook_outbox (event_type, payload)
-            VALUES (:event_type, :payload::jsonb)
+            VALUES (:event_type, CAST(:payload AS jsonb))
             """,
             {"event_type": event_type, "payload": json.dumps(payload)},
         )
