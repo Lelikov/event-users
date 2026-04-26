@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from event_users.adapters.cache_notifier import CacheNotifier
+from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
 from event_users.config import Settings
@@ -18,6 +19,7 @@ from event_users.controllers.users import UsersController
 from event_users.crm.client import CrmClient
 from event_users.crm.sync import CrmSyncRunner
 from event_users.interfaces.cache_notifier import ICacheNotifier
+from event_users.interfaces.changelog import IEmailChangelogDBAdapter
 from event_users.interfaces.sql import ISqlExecutor, ISqlExecutorFactory
 from event_users.interfaces.users import IUsersController, IUsersDBAdapter
 
@@ -81,6 +83,10 @@ class AppProvider(Provider):
     @provide(scope=Scope.REQUEST)
     def provide_users_controller(self, db_adapter: IUsersDBAdapter) -> IUsersController:
         return UsersController(db_adapter)
+
+    @provide(scope=Scope.REQUEST)
+    def provide_changelog_adapter(self, sql_executor: ISqlExecutor) -> IEmailChangelogDBAdapter:
+        return EmailChangelogDBAdapter(sql_executor)
 
     @provide(scope=Scope.APP)
     def provide_sql_executor_factory(self) -> ISqlExecutorFactory:

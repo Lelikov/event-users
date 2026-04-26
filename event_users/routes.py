@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from event_users.auth import require_admin
 from event_users.errors import ConflictError
 from event_users.interfaces.cache_notifier import ICacheNotifier
+from event_users.interfaces.changelog import IEmailChangelogDBAdapter
 from event_users.interfaces.users import IUsersController
+from event_users.schemas.changelog import EmailChangelogEntryResponse, EmailChangelogResponse
 from event_users.schemas.users import (
     CreateUserRequest,
     GetUsersByIdsRequest,
@@ -130,6 +132,20 @@ async def list_users(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@users_router.get("/{user_id}/email-changelog", response_model=EmailChangelogResponse)
+async def get_email_changelog(
+    user_id: uuid.UUID,
+    changelog_adapter: FromDishka[IEmailChangelogDBAdapter],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> EmailChangelogResponse:
+    entries, total = await changelog_adapter.get_changelog(user_id, limit=limit, offset=offset)
+    return EmailChangelogResponse(
+        items=[EmailChangelogEntryResponse.from_dto(e) for e in entries],
+        total=total,
     )
 
 
