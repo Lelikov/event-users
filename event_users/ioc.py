@@ -15,7 +15,7 @@ from event_users.adapters.cache_notifier import CacheNotifier
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
-from event_users.config import Settings
+from event_users.config import Settings, get_settings
 from event_users.consumer import EmailChangeConsumer
 from event_users.controllers.users import UsersController
 from event_users.crm.client import CrmClient
@@ -34,7 +34,8 @@ logger = structlog.get_logger(__name__)
 class AppProvider(Provider):
     @provide(scope=Scope.APP)
     def provide_settings(self) -> Settings:
-        settings = Settings()
+        # Same singleton the auth/CORS code uses — settings are built exactly once.
+        settings = get_settings()
         logger.info(
             "Settings initialized",
             debug=settings.debug,

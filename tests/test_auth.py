@@ -76,3 +76,56 @@ def test_require_admin_rejects_non_admin() -> None:
     with pytest.raises(HTTPException) as exc_info:
         require_admin(TokenPayload(sub="a@b.c", role="user"))
     assert exc_info.value.status_code == 403
+
+
+def _settings_with(monkeypatch, **overrides):
+    patched = get_settings().model_copy(update=overrides)
+    monkeypatch.setattr("event_users.auth.get_settings", lambda: patched)
+    return patched
+
+
+def test_audience_and_issuer_verified_when_configured(monkeypatch) -> None:
+    settings = _settings_with(monkeypatch, jwt_audience="event-users", jwt_issuer="event-admin")
+    token = jwt.encode(
+        {
+            "sub": "u@e.c",
+            "role": "admin",
+            "aud": "event-users",
+            "iss": "event-admin",
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+        },
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    payload = verify_bearer_token(make_credentials(token))
+    assert payload.role == "admin"
+
+
+def test_wrong_audience_rejected_when_configured(monkeypatch) -> None:
+    settings = _settings_with(monkeypatch, jwt_audience="event-users")
+    token = jwt.encode(
+        {"sub": "u@e.c", "role": "admin", "aud": "event-admin-ui", "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        verify_bearer_token(make_credentials(token))
+    assert exc_info.value.status_code == 401
+
+
+def test_missing_audience_rejected_when_configured(monkeypatch) -> None:
+    settings = _settings_with(monkeypatch, jwt_audience="event-users")
+    token = jwt.encode(
+        {"sub": "u@e.c", "role": "admin", "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        verify_bearer_token(make_credentials(token))
+    assert exc_info.value.status_code == 401
+
+
+def test_audience_ignored_when_not_configured() -> None:
+    # Backward tolerance: tokens with extra aud/iss claims still pass when binding is off.
+    payload = verify_bearer_token(make_credentials(make_jwt(role="admin", aud="anything", iss="anyone")))
+    assert payload.role == "admin"

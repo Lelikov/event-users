@@ -24,16 +24,21 @@ from event_users.schemas.users import (
 
 logger = structlog.get_logger(__name__)
 
-# Auth enforced globally by JWTAuthMiddleware; write routes additionally require admin role.
+# Every /api/users route (reads included — they expose PII) requires the admin
+# role; tokens are decoded once, in auth.verify_bearer_token.
 root_router = APIRouter(route_class=DishkaRoute)
-users_router = APIRouter(prefix="/api/users", tags=["users"], route_class=DishkaRoute)
+users_router = APIRouter(
+    prefix="/api/users",
+    tags=["users"],
+    route_class=DishkaRoute,
+    dependencies=[Depends(require_admin)],
+)
 
 
 @users_router.post(
     "",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
 )
 async def create_user(
     body: CreateUserRequest,
@@ -53,7 +58,6 @@ async def create_user(
 @users_router.patch(
     "/id/{user_id}",
     response_model=UserResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def update_user(
     user_id: uuid.UUID,
