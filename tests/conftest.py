@@ -34,7 +34,10 @@ class FakeSqlExecutor:
     async def fetch_one(self, query: str, values: dict):
         self.statements.append((query, values))
         if self.fetch_one_results:
-            return self.fetch_one_results.pop(0)
+            result = self.fetch_one_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
         return None
 
     async def fetch_all(self, query: str, values: dict) -> list:

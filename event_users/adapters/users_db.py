@@ -105,6 +105,21 @@ class UsersDBAdapter:
             )
 
     async def update_user(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> UserDTO | None:
+        row = await self._apply_update(user_id, dto)
+        if row is None:
+            return None
+
+        contacts_for_upsert: list[CreateUserContactDTO] = [
+            *(dto.contacts or []),
+            CreateUserContactDTO(channel="email", contact_id=row["email"]),
+        ]
+        await self._upsert_contacts(user_id, contacts_for_upsert)
+
+        contacts = await self._fetch_contacts(user_id)
+        logger.info("User updated", user_id=str(user_id))
+        return _user_from_row(row, contacts)
+
+    async def _apply_update(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> RowMapping | None:
         set_clauses: list[str] = []
         values: dict = {"user_id": user_id}
 
@@ -121,9 +136,15 @@ class UsersDBAdapter:
             set_clauses.append("time_zone = :time_zone")
             values["time_zone"] = dto.time_zone
 
-        if set_clauses:
-            set_clauses.append("updated_at = now()")
-            row = await self._sql.fetch_one(
+        if not set_clauses:
+            return await self._sql.fetch_one(
+                "SELECT id, email, name, role, time_zone, created_at, updated_at FROM users WHERE id = :user_id",
+                {"user_id": user_id},
+            )
+
+        set_clauses.append("updated_at = now()")
+        try:
+            return await self._sql.fetch_one(
                 f"""
                 UPDATE users
                 SET {", ".join(set_clauses)}
@@ -132,25 +153,11 @@ class UsersDBAdapter:
                 """,  # noqa: S608
                 values,
             )
-            if row is None:
-                return None
-        else:
-            row = await self._sql.fetch_one(
-                "SELECT id, email, name, role, time_zone, created_at, updated_at FROM users WHERE id = :user_id",
-                {"user_id": user_id},
-            )
-            if row is None:
-                return None
-
-        contacts_for_upsert: list[CreateUserContactDTO] = [
-            *(dto.contacts or []),
-            CreateUserContactDTO(channel="email", contact_id=row["email"]),
-        ]
-        await self._upsert_contacts(user_id, contacts_for_upsert)
-
-        contacts = await self._fetch_contacts(user_id)
-        logger.info("User updated", user_id=str(user_id))
-        return _user_from_row(row, contacts)
+        except IntegrityError as e:
+            logger.info("User update conflict", user_id=str(user_id), email=dto.email, role=dto.role)
+            raise ConflictError(
+                f"User with email={dto.email!r} and role={dto.role!r} already exists",
+            ) from e
 
     async def get_user(self, user_id: uuid.UUID) -> UserDTO | None:
         row = await self._sql.fetch_one(
