@@ -89,6 +89,8 @@ class UserEmailChangelog(Base):
     old_email: Mapped[str] = mapped_column(Text, nullable=False)
     new_email: Mapped[str] = mapped_column(Text, nullable=False)
     changed_by: Mapped[str] = mapped_column(Text, nullable=False)
+    # CloudEvent ce-id of the message that produced this entry (consumer idempotency key)
+    message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -98,6 +100,7 @@ class UserEmailChangelog(Base):
     __table_args__ = (
         Index("ix_user_email_changelog_user_id", "user_id"),
         Index("ix_user_email_changelog_changed_at", "changed_at"),
+        Index("uq_user_email_changelog_message_id", "message_id", unique=True),
     )
 
 

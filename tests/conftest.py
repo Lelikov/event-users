@@ -81,6 +81,47 @@ class FakeSessionmaker:
         return session
 
 
+class FakeResult:
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> Self:
+        return self
+
+    def all(self) -> list[dict]:
+        return self._rows
+
+    def first(self) -> dict | None:
+        return self._rows[0] if self._rows else None
+
+
+class RecordingSession(FakeSession):
+    """FakeSession that also records SQL (for code that builds its own SqlExecutor)."""
+
+    def __init__(self, results: list[list[dict]] | None = None) -> None:
+        super().__init__()
+        self._results = results or []
+        self.statements: list[tuple[str, dict]] = []
+
+    async def execute(self, query, values):
+        self.statements.append((str(query), values))
+        if self._results:
+            return FakeResult(self._results.pop(0))
+        return FakeResult([])
+
+
+class RecordingSessionmaker:
+    def __init__(self, results_per_session: list[list[list[dict]]]) -> None:
+        self._results = results_per_session
+        self.sessions: list[RecordingSession] = []
+
+    def __call__(self) -> RecordingSession:
+        results = self._results.pop(0) if self._results else []
+        session = RecordingSession(results)
+        self.sessions.append(session)
+        return session
+
+
 @pytest.fixture
 def sql() -> FakeSqlExecutor:
     return FakeSqlExecutor()

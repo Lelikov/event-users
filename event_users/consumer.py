@@ -25,14 +25,34 @@ async def handle_email_change(
     old_email: str,
     new_email: str,
     requested_by: str,
+    message_id: str | None = None,
 ) -> None:
-    """Process email change in a single transaction."""
+    """Process email change in a single transaction (idempotent on ce-id)."""
     async with sessionmaker() as session:
         try:
             sql: ISqlExecutor = SqlExecutor(session)
             changelog_db = EmailChangelogDBAdapter(sql)
 
             user_id = uuid.UUID(user_id_str)
+
+            # Idempotency gate first: the changelog insert conflicts on ce-id
+            # for redelivered messages — skip everything (no duplicate webhook,
+            # no phantom audit entry).
+            inserted = await changelog_db.add_entry(
+                user_id=user_id,
+                old_email=old_email,
+                new_email=new_email,
+                changed_by=requested_by,
+                message_id=message_id,
+            )
+            if not inserted:
+                await session.rollback()
+                logger.info(
+                    "Email change message already processed, skipping",
+                    user_id=user_id_str,
+                    message_id=message_id,
+                )
+                return
 
             # Update user email and set email_source = 'admin'
             await sql.execute(
@@ -53,14 +73,6 @@ async def handle_email_change(
                 DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
                 """,
                 {"user_id": user_id, "new_email": new_email},
-            )
-
-            # Add changelog entry
-            await changelog_db.add_entry(
-                user_id=user_id,
-                old_email=old_email,
-                new_email=new_email,
-                changed_by=requested_by,
             )
 
             # Add webhook outbox entry
@@ -133,6 +145,7 @@ class EmailChangeConsumer:
                 old_email=original["old_email"],
                 new_email=original["new_email"],
                 requested_by=original["requested_by"],
+                message_id=headers.get("ce-id"),
             )
 
         await self._broker.start()

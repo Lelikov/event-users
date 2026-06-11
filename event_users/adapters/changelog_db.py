@@ -57,25 +57,39 @@ class EmailChangelogDBAdapter:
         old_email: str,
         new_email: str,
         changed_by: str,
-    ) -> None:
-        await self._sql.execute(
+        message_id: str | None = None,
+    ) -> bool:
+        """Insert a changelog entry.
+
+        `message_id` (CloudEvent ce-id) is a unique idempotency key: a conflict
+        means this message was already processed and False is returned so the
+        caller can skip the rest of the work (NULL message_ids never conflict).
+        """
+        row = await self._sql.fetch_one(
             """
-            INSERT INTO user_email_changelog (user_id, old_email, new_email, changed_by)
-            VALUES (:user_id, :old_email, :new_email, :changed_by)
+            INSERT INTO user_email_changelog (user_id, old_email, new_email, changed_by, message_id)
+            VALUES (:user_id, :old_email, :new_email, :changed_by, :message_id)
+            ON CONFLICT (message_id) DO NOTHING
+            RETURNING id
             """,
             {
                 "user_id": user_id,
                 "old_email": old_email,
                 "new_email": new_email,
                 "changed_by": changed_by,
+                "message_id": message_id,
             },
         )
+        if row is None:
+            logger.info("Duplicate email change message, changelog entry skipped", message_id=message_id)
+            return False
         logger.info(
             "Email changelog entry added",
             user_id=str(user_id),
             old_email=old_email,
             new_email=new_email,
         )
+        return True
 
     async def get_admin_changed_email_roles(self) -> set[tuple[str, str]]:
         """(old_email, role) pairs the CRM sync must not resurrect — one query per sync cycle."""

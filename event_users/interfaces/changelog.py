@@ -20,7 +20,8 @@ class IEmailChangelogDBAdapter(Protocol):
         old_email: str,
         new_email: str,
         changed_by: str,
-    ) -> None: ...
+        message_id: str | None = None,
+    ) -> bool: ...
 
     async def is_email_changed_by_admin(self, email: str, role: str) -> bool: ...
 
