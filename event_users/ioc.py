@@ -167,4 +167,5 @@ class AppProvider(Provider):
             webhook_client=webhook_client,
             poll_interval=settings.webhook_poll_interval_seconds,
             batch_size=settings.webhook_batch_size,
+            visibility_timeout=settings.webhook_visibility_timeout_seconds,
         )
