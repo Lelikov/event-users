@@ -208,8 +208,11 @@ class UsersDBAdapter:
         values: dict = {"limit": query.limit, "offset": query.offset}
 
         if query.email is not None:
-            conditions.append("email ILIKE :email")
-            values["email"] = f"%{query.email}%"
+            # Escape ILIKE metacharacters: '_' is legal in email local parts and
+            # '%'/'\' must not act as wildcards in a user-supplied search term.
+            escaped = query.email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("email ILIKE :email ESCAPE '\\'")
+            values["email"] = f"%{escaped}%"
         if query.role is not None:
             conditions.append("role = :role")
             values["role"] = query.role

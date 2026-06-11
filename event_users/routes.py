@@ -101,7 +101,30 @@ async def get_users_by_ids(
     return GetUsersByIdsResponse(items=[UserResponse.from_dto(u) for u in items])
 
 
-@users_router.get("/roles/{role}/emails/{email}", response_model=UserResponse)
+@users_router.get("/by-identity", response_model=UserResponse)
+async def get_user_by_identity(
+    controller: FromDishka[IUsersController],
+    email: Annotated[str, Query(description="Exact email match")],
+    role: Annotated[Literal["client", "organizer"], Query(description="User role")],
+) -> UserResponse:
+    """Exact-match lookup with the email in query params (not the URL path).
+
+    Preferred over GET /roles/{role}/emails/{email}: emails contain '+', '.'
+    and '%', which decode inconsistently across proxies as path segments and
+    end up in access logs.
+    """
+    dto = await controller.get_user_by_email_role(email=email, role=role)
+    if dto is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with email={email!r} and role={role!r} not found",
+        )
+    return UserResponse.from_dto(dto)
+
+
+# Deprecated: use GET /api/users/by-identity. Kept until event-notifier and
+# other callers migrate off the path-segment contract.
+@users_router.get("/roles/{role}/emails/{email}", response_model=UserResponse, deprecated=True)
 async def get_user_by_email_role(
     controller: FromDishka[IUsersController],
     role: Literal["client", "organizer"],

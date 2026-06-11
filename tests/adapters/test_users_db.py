@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from event_users.adapters.users_db import UsersDBAdapter
-from event_users.dto.users import CreateUserContactDTO, CreateUserDTO, UpdateUserDTO
+from event_users.dto.users import CreateUserContactDTO, CreateUserDTO, ListUsersQueryDTO, UpdateUserDTO
 from event_users.errors import ConflictError
 
 
@@ -98,3 +98,14 @@ async def test_upsert_user_from_crm_batches_contacts_into_one_statement(sql) -> 
     _, values = contact_statements[0]
     assert values["channels"] == ["telegram", "push", "email"]
     assert values["contact_ids"] == ["123", "tok", "a@b.c"]
+
+
+async def test_list_users_escapes_ilike_wildcards(sql) -> None:
+    adapter = UsersDBAdapter(sql)
+    sql.fetch_one_results.append({"total": 0})
+
+    await adapter.list_users(ListUsersQueryDTO(email="a_b%c", role=None, limit=10, offset=0))
+
+    count_query, values = sql.statements[0]
+    assert "ESCAPE" in count_query
+    assert values["email"] == "%a\\_b\\%c%"
