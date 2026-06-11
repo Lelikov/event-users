@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from event_users.adapters.users_db import UsersDBAdapter
-from event_users.dto.users import CreateUserDTO, UpdateUserDTO
+from event_users.dto.users import CreateUserContactDTO, CreateUserDTO, UpdateUserDTO
 from event_users.errors import ConflictError
 
 
@@ -68,3 +68,33 @@ async def test_create_user_raises_conflict_on_integrity_error(sql) -> None:
     dto = CreateUserDTO(email="a@b.c", name=None, role="client", time_zone=None, contacts=[])
     with pytest.raises(ConflictError, match="already exists"):
         await adapter.create_user(dto)
+
+
+async def test_upsert_user_from_crm_flips_email_source_on_convergence(sql) -> None:
+    adapter = UsersDBAdapter(sql)
+    sql.fetch_one_results.append({"id": uuid.uuid4()})
+
+    await adapter.upsert_user_from_crm(email="a@b.c", role="client", time_zone=None)
+
+    upsert_query, _ = sql.statements[0]
+    assert "RETURNING id" in upsert_query
+    assert "email_source = 'crm'" in upsert_query  # convergence disarms the admin guard
+    assert "WHERE users.email_source" not in upsert_query
+
+
+async def test_upsert_user_from_crm_batches_contacts_into_one_statement(sql) -> None:
+    adapter = UsersDBAdapter(sql)
+    user_id = uuid.uuid4()
+    sql.fetch_one_results.append({"id": user_id})
+
+    contacts = [
+        CreateUserContactDTO(channel="telegram", contact_id="123"),
+        CreateUserContactDTO(channel="push", contact_id="tok"),
+    ]
+    await adapter.upsert_user_from_crm(email="a@b.c", role="client", time_zone=None, contacts=contacts)
+
+    contact_statements = [(q, v) for q, v in sql.statements if "user_contacts" in q]
+    assert len(contact_statements) == 1
+    _, values = contact_statements[0]
+    assert values["channels"] == ["telegram", "push", "email"]
+    assert values["contact_ids"] == ["123", "tok", "a@b.c"]

@@ -93,16 +93,21 @@ class UsersDBAdapter:
         return _user_from_row(row, contacts)
 
     async def _upsert_contacts(self, user_id: uuid.UUID, contacts: list[CreateUserContactDTO]) -> None:
-        for contact in contacts:
-            await self._sql.execute(
-                """
-                INSERT INTO user_contacts (user_id, channel, contact_id)
-                VALUES (:user_id, :channel, :contact_id)
-                ON CONFLICT (user_id, channel)
-                DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
-                """,
-                {"user_id": user_id, "channel": contact.channel, "contact_id": contact.contact_id},
-            )
+        if not contacts:
+            return
+        # One statement for the whole batch; dedupe by channel (last wins) so a
+        # single INSERT cannot touch the same (user_id, channel) row twice.
+        by_channel: dict[str, str] = {contact.channel: contact.contact_id for contact in contacts}
+        await self._sql.execute(
+            """
+            INSERT INTO user_contacts (user_id, channel, contact_id)
+            SELECT :user_id, t.channel, t.contact_id
+            FROM unnest(CAST(:channels AS text[]), CAST(:contact_ids AS text[])) AS t(channel, contact_id)
+            ON CONFLICT (user_id, channel)
+            DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
+            """,
+            {"user_id": user_id, "channels": list(by_channel), "contact_ids": list(by_channel.values())},
+        )
 
     async def update_user(
         self,
@@ -290,7 +295,12 @@ class UsersDBAdapter:
         # COALESCE preserves existing values when CRM sends NULL. This is intentional:
         # CRM null means "not provided", not "clear this field".
         # If CRM semantics change, switch to direct assignment.
-        await self._sql.execute(
+        #
+        # A conflict means the CRM now exports exactly this (email, role), i.e.
+        # any pending admin email change has converged on the CRM side — so
+        # email_source flips back to 'crm' HERE, not when the webhook is merely
+        # delivered (the CRM-sync guard stays armed until convergence).
+        user_row = await self._sql.fetch_one(
             """
             INSERT INTO users (email, name, role, time_zone, email_source)
             VALUES (:email, :name, :role, :time_zone, 'crm')
@@ -298,21 +308,16 @@ class UsersDBAdapter:
             DO UPDATE SET
                 name = COALESCE(EXCLUDED.name, users.name),
                 time_zone = COALESCE(EXCLUDED.time_zone, users.time_zone),
+                email_source = 'crm',
                 updated_at = now()
-            WHERE users.email_source != 'admin'
+            RETURNING id
             """,
             {"email": email, "name": name, "role": role, "time_zone": time_zone},
         )
-
-        user_row = await self._sql.fetch_one(
-            "SELECT id FROM users WHERE email = :email AND role = :role",
-            {"email": email, "role": role},
-        )
-        if user_row is not None:
-            contacts_for_upsert: list[CreateUserContactDTO] = [
-                *(contacts or []),
-                CreateUserContactDTO(channel="email", contact_id=email),
-            ]
-            await self._upsert_contacts(user_row["id"], contacts_for_upsert)
+        contacts_for_upsert: list[CreateUserContactDTO] = [
+            *(contacts or []),
+            CreateUserContactDTO(channel="email", contact_id=email),
+        ]
+        await self._upsert_contacts(user_row["id"], contacts_for_upsert)
 
         logger.debug("User upserted from CRM", email=email, role=role)

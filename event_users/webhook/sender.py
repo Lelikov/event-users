@@ -62,7 +62,11 @@ class WebhookOutboxSender:
 
                 try:
                     await self._webhook_client.send(payload)
-                    # Success: mark delivered and reset email_source
+                    # Success: mark delivered. email_source is NOT reset here —
+                    # a 2xx only means the CRM received the webhook, not that its
+                    # /users export reflects the new email. The CRM sync flips
+                    # email_source back to 'crm' once the export converges
+                    # (upsert_user_from_crm conflict on the new email).
                     await sql.execute(
                         """
                         UPDATE webhook_outbox
@@ -71,15 +75,6 @@ class WebhookOutboxSender:
                         """,
                         {"id": outbox_id, "attempts": attempts},
                     )
-
-                    # Reset email_source to 'crm' — CRM now has the new email
-                    user_id = payload.get("user_id")
-                    if user_id:
-                        await sql.execute(
-                            "UPDATE users SET email_source = 'crm' WHERE id = :user_id",
-                            {"user_id": user_id},
-                        )
-
                     logger.info("Webhook delivered", outbox_id=str(outbox_id))
 
                 except Exception as exc:
