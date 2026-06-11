@@ -2,14 +2,13 @@
 
 ## Authentication
 
-All endpoints require a valid Bearer token in the `Authorization` header, verified by `BearerAuthMiddleware` (`middleware.py:12-40`) and optionally re-verified by route-level dependencies (`auth.py:26-46`).
+Every `/api/users` route (reads included — they expose PII) requires `role=admin`, enforced by a router-level `require_admin` dependency. Tokens are decoded exactly once, in `auth.verify_bearer_token` (there is no auth middleware).
 
 Two accepted token forms:
-- **JWT**: HS256-signed JWT with `sub` (email) and `role` (`admin` | `user`) claims. Signed with `JWT_SECRET_KEY`.
-- **Static API token**: If `API_BEARER_TOKEN` env var is set and the presented token matches it exactly, the request is granted `role=admin` without JWT verification. Intended for service-to-service calls where issuing JWTs is inconvenient.
+- **JWT**: HS256-signed JWT with `sub` (email) and `role` (`admin` | `user`) claims, signed with `JWT_SECRET_KEY`. If `JWT_AUDIENCE` / `JWT_ISSUER` are configured, `aud` / `iss` claims MUST match; when unset they are not verified (rollout tolerance).
+- **Static API token**: if `API_BEARER_TOKEN` is set and the presented token matches it (constant-time comparison), the request is granted `role=admin`. Intended for service-to-service calls.
 
-- **Write endpoints** (POST, PATCH) additionally require `role=admin` via `require_admin` dependency (`auth.py:49-54`).
-- **Health endpoint** (`/health`) IS exempt from `BearerAuthMiddleware` — unauthenticated liveness probes receive `200 {"status": "ok"}`.
+- **Health endpoint** (`/health`) is intentionally public — unauthenticated liveness probes receive `200 {"status": "ok"}`.
 
 ---
 
@@ -21,7 +20,7 @@ Create a new user.
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT + admin role |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 201 Created |
 | Source | `routes.py:27-43` |
 
@@ -65,7 +64,7 @@ Update an existing user (PATCH semantics -- only non-null fields are updated).
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT + admin role |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 200 OK |
 | Source | `routes.py:46-64` |
 
@@ -88,6 +87,8 @@ Update an existing user (PATCH semantics -- only non-null fields are updated).
 
 **Errors**: 404 (user not found), 409 (email+role conflict), 422 (invalid timezone).
 
+**Email-change semantics**: when `email` differs from the current value, the update also sets `email_source='admin'`, writes a `user_email_changelog` entry (`changed_by` = token `sub`), and queues a `user.email.changed` webhook to CRM — same behaviour as the RabbitMQ consumer path.
+
 ---
 
 ### POST /api/users/by-ids
@@ -96,7 +97,7 @@ Fetch multiple users by a list of UUIDs in a single request.
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT (any role) |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 200 OK |
 | Source | `routes.py` |
 
@@ -126,7 +127,7 @@ Fetch a single user by UUID.
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT (any role) |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 200 OK |
 | Source | `routes.py:82-90` |
 
@@ -138,23 +139,31 @@ Fetch a single user by UUID.
 
 ---
 
-### GET /api/users/roles/{role}/emails/{email}
+### GET /api/users/by-identity
 
-Fetch a single user by email and role combination.
+Exact-match lookup by email + role (query params — preferred over the deprecated path variant below).
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT (any role) |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 200 OK |
-| Source | `routes.py:67-79` |
+| Source | `routes.py` (`get_user_by_identity`) |
 
-**Path params**:
-- `role`: `"client"` | `"organizer"`
-- `email`: string (note: special chars like `+` must be URL-encoded)
+**Query params**:
+- `email`: string, exact match (required)
+- `role`: `"client"` | `"organizer"` (required)
 
 **Response**: `UserResponse`
 
 **Errors**: 404 (user with given email+role not found).
+
+This is the endpoint event-notifier and other services should use to resolve a user's contacts by email.
+
+---
+
+### GET /api/users/roles/{role}/emails/{email} (deprecated)
+
+Same exact-match lookup with the email as a URL path segment. Deprecated: emails contain `+`, `.` and `%`, which decode inconsistently across proxies and leak into access logs. Use `GET /api/users/by-identity` instead. Kept until all callers migrate.
 
 ---
 
@@ -164,7 +173,7 @@ List users with optional filtering and pagination.
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT (any role) |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 200 OK |
 | Source | `routes.py:93-111` |
 
@@ -172,7 +181,7 @@ List users with optional filtering and pagination.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `email` | string, optional | null | Case-insensitive partial match (ILIKE `%value%`) |
+| `email` | string, optional | null | Case-insensitive partial match; `%`, `_` and `\\` in the term are escaped (no user-supplied wildcards) |
 | `role` | `"client"` \| `"organizer"`, optional | null | Exact match filter |
 | `limit` | int (1-500) | 50 | Page size |
 | `offset` | int (>=0) | 0 | Pagination offset |
@@ -189,11 +198,7 @@ List users with optional filtering and pagination.
 
 #### Usage by event-notifier
 
-The `event-notifier` service looks up a user's contact details using:
-```
-GET /api/users?email=user@example.com&role=client&limit=1
-```
-This returns the matching user with their contact channels (telegram, push, email) so the notifier can dispatch messages. The ILIKE match is partial, so exact email + role filtering ensures a unique result when combined with `limit=1`.
+event-notifier currently resolves recipients via `GET /api/users?email=…&role=…&limit=1`. **This is a substring search and can match the wrong user** (e.g. `ann@x.com` inside `joann@x.com`); it must migrate to the exact-match `GET /api/users/by-identity` endpoint.
 
 ---
 
@@ -203,7 +208,7 @@ This returns the matching user with their contact channels (telegram, push, emai
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | Bearer JWT (any role) |
+| Auth | Bearer token, admin role (router-level) |
 | Status | 200 OK |
 
 **Path params**: `user_id` (UUID)
@@ -212,7 +217,7 @@ This returns the matching user with their contact channels (telegram, push, emai
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `limit` | int (1-500) | 50 | Размер страницы |
+| `limit` | int (1-100) | 20 | Размер страницы |
 | `offset` | int (>=0) | 0 | Смещение для пагинации |
 
 **Response**:
@@ -231,7 +236,7 @@ This returns the matching user with their contact channels (telegram, push, emai
 }
 ```
 
-**Errors**: 404 (пользователь не найден).
+**Notes**: для неизвестного `user_id` возвращается пустой список (`items: [], total: 0`), а не 404.
 
 ---
 
@@ -241,9 +246,9 @@ Health check endpoint.
 
 | Aspect | Detail |
 |--------|--------|
-| Auth | None — exempt from `BearerAuthMiddleware` via `public_paths` |
+| Auth | None — registered on a separate router without `require_admin` |
 | Status | 200 OK |
-| Source | `routes.py:117-119` |
+| Source | `routes.py` (`health_router`) |
 
 **Response**:
 ```json
