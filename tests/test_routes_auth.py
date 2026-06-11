@@ -22,7 +22,7 @@ def make_jwt(role: str = "admin", **extra) -> str:
 READ_ROUTES = [
     ("GET", "/api/users"),
     ("GET", "/api/users/id/8b3c9a52-0000-0000-0000-000000000000"),
-    ("GET", "/api/users/roles/client/emails/a@b.c"),
+    ("GET", "/api/users/by-identity?email=a@b.c&role=client"),
     ("GET", "/api/users/8b3c9a52-0000-0000-0000-000000000000/email-changelog"),
     ("POST", "/api/users/by-ids"),
 ]

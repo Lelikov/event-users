@@ -141,7 +141,7 @@ Fetch a single user by UUID.
 
 ### GET /api/users/by-identity
 
-Exact-match lookup by email + role (query params — preferred over the deprecated path variant below).
+Exact-match lookup by email + role (query params).
 
 | Aspect | Detail |
 |--------|--------|
@@ -158,12 +158,6 @@ Exact-match lookup by email + role (query params — preferred over the deprecat
 **Errors**: 404 (user with given email+role not found).
 
 This is the endpoint event-notifier and other services should use to resolve a user's contacts by email.
-
----
-
-### GET /api/users/roles/{role}/emails/{email} (deprecated)
-
-Same exact-match lookup with the email as a URL path segment. Deprecated: emails contain `+`, `.` and `%`, which decode inconsistently across proxies and leak into access logs. Use `GET /api/users/by-identity` instead. Kept until all callers migrate.
 
 ---
 

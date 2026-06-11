@@ -77,6 +77,6 @@ Notable optional vars: `JWT_AUDIENCE`/`JWT_ISSUER` (aud/iss claim binding — en
 1. **COALESCE in upsert prevents clearing fields** — intentional: CRM `null` means "not provided", not "clear this field" (`adapters/users_db.py`).
 2. **No index on `user_contacts.channel`** — channel-wide reverse lookups are unsupported; add the index with the first consumer that needs it.
 3. **App import requires a populated `.env`** — `Settings` has required fields with no defaults; tooling that imports `main.py` needs at least the values from `.env.example`.
-4. **`GET /roles/{role}/emails/{email}` is deprecated** — use `GET /api/users/by-identity` (query params); the path variant is kept until event-notifier migrates.
+4. **`GET /roles/{role}/emails/{email}` was removed** — all callers use `GET /api/users/by-identity` (query params); the path-segment variant no longer exists.
 
 For the full audit history and fix commits see `AUDIT.md`.

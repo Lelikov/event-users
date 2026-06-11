@@ -27,7 +27,7 @@ open were re-verified and carried into v2.
 | 15 | MEDIUM | Read endpoints not admin-gated — PII enumeration with any valid token | **FIXED** `1c57be5`: `require_admin` on the whole `/api/users` router |
 | 16 | MEDIUM | JWT verification omits aud/iss | **FIXED** `1c57be5`: optional `JWT_AUDIENCE`/`JWT_ISSUER` settings (enforced when set; rollout-tolerant when unset). event-admin must mint matching claims before enabling |
 | 17 | MEDIUM | `events.user.email` bound by event-receiver but consumer off by default — unbounded accumulation | **FIXED**: `IS_CONSUMER_ENABLED` defaults to `true` |
-| 18 | LOW | Email as URL path segment in `/roles/{role}/emails/{email}` | **FIXED** `931c41a`: query-param `GET /by-identity` added; path endpoint kept but deprecated |
+| 18 | LOW | Email as URL path segment in `/roles/{role}/emails/{email}` | **FIXED** `931c41a`: query-param `GET /by-identity` added; deprecated path endpoint removed in audit-v2 follow-up #2 |
 | 19 | LOW | No index on `user_contacts.channel` | **OPEN (documented)**: no code performs channel-wide lookups; add the index with the first consumer that needs it |
 | 20 | LOW | Dead code (NotFoundError, ISqlExecutorFactory, execute_in_transaction, unused 'processing' status) | **FIXED** `5b482c5` (and 'processing' is now actually used by the outbox claim phase) |
 | 21 | LOW | Unused dependencies (cloudevents, colorama, rich, tenacity) | **FIXED** `5b482c5` |
