@@ -77,6 +77,19 @@ class EmailChangelogDBAdapter:
             new_email=new_email,
         )
 
+    async def get_admin_changed_email_roles(self) -> set[tuple[str, str]]:
+        """(old_email, role) pairs the CRM sync must not resurrect — one query per sync cycle."""
+        rows = await self._sql.fetch_all(
+            """
+            SELECT DISTINCT c.old_email, u.role
+            FROM user_email_changelog c
+            JOIN users u ON u.id = c.user_id
+            WHERE u.email_source = 'admin'
+            """,
+            {},
+        )
+        return {(row["old_email"], row["role"]) for row in rows}
+
     async def is_email_changed_by_admin(self, email: str, role: str) -> bool:
         """Check if this email was recently changed away from by an admin (for CRM sync protection)."""
         row = await self._sql.fetch_one(

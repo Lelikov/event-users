@@ -123,6 +123,7 @@ class AppProvider(Provider):
             sessionmaker=sessionmaker,
             encryption_key=encryption_key,
             interval=settings.crm_sync_interval_seconds,
+            max_backoff=settings.crm_sync_max_backoff_seconds,
         )
 
     # ========== event-admin cache invalidation ==========
