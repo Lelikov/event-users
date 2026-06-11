@@ -8,28 +8,53 @@ User and contact management service with background CRM synchronisation. Maintai
 - **User contacts** store communication channel identifiers (Telegram, push tokens, email) per user.
 - `participants.user_id` in `event-saver`'s database references the UUID primary key from this service.
 
+## Subsystems
+
+| Subsystem | Entry point | Toggle |
+|-----------|-------------|--------|
+| HTTP API (`/api/users`) | `routes.py` | always on |
+| CRM background sync | `crm/sync.py` (`CrmSyncRunner`) | `IS_SYNC_ENABLED` (default `false`) |
+| RabbitMQ consumer (`events.user.email`) | `consumer.py` (`EmailChangeConsumer`) | `IS_CONSUMER_ENABLED` (default `true`) |
+| CRM webhook outbox poller | `webhook/sender.py` (`WebhookOutboxSender`) | `IS_WEBHOOK_ENABLED` (default `false`) |
+| event-admin cache invalidation | `adapters/cache_notifier.py` | `EVENT_ADMIN_URL` set |
+
 ## CRM Sync
 
-A background asyncio task started in the FastAPI lifespan (`main.py:35-41`) periodically fetches user data from an external CRM API and upserts it into the local database.
+A background asyncio task started in the FastAPI lifespan periodically fetches user data from an external CRM API and upserts it into the local database.
 
 | Aspect | Detail | Source |
 |--------|--------|--------|
-| Frequency | Every 300 seconds (5 minutes) by default | `config.py:38` |
-| Toggle | Controlled by `IS_SYNC_ENABLED` env var (default `false`) | `config.py:32` |
-| Transport | HTTPS GET to `{CRM_API_URL}/users` with Bearer token auth, paginated (page_size=100) | `crm/client.py:24-45` |
-| Encryption | AES-256-CBC; IV provided per response, key from `CRM_ENCRYPTION_KEY` (64-char hex = 32 bytes) | `crm/sync.py:30-55` |
-| Decryption | `cryptography` library: AES-CBC + PKCS7 unpadding, then JSON parse | `crm/sync.py:30-55` |
-| Upsert logic | `INSERT ... ON CONFLICT (email, role) DO UPDATE` with `COALESCE` for name/time_zone | `adapters/users_db.py:228-258` |
-| Runner loop | Catches all non-`CancelledError` exceptions, logs, sleeps, retries | `crm/sync.py:117-132` |
+| Frequency | Every `CRM_SYNC_INTERVAL_SECONDS` (default 300 s); exponential backoff on repeated failures (interval × 2^failures, capped at `CRM_SYNC_MAX_BACKOFF_SECONDS`) | `crm/sync.py` (`CrmSyncRunner`) |
+| Transport | HTTPS GET to `{CRM_API_URL}/users` with Bearer token auth, paginated (page_size=100), shared `httpx.AsyncClient` | `crm/client.py` |
+| Encryption | AES-256-CBC; IV per response, key from `CRM_ENCRYPTION_KEY` (64-char hex = 32 bytes) | `crm/sync.py` (`decrypt_payload`) |
+| Error handling | Payload-level failures raise `CrmDecryptError` (cycle fails, backoff kicks in); malformed individual records are quarantined and counted | `crm/sync.py` |
+| Transactions | One commit per page; a failure on a later page keeps earlier pages | `CrmSyncService.sync` |
+| Admin guard | One `get_admin_changed_email_roles()` query per cycle; CRM records matching an admin-changed old email are skipped | `adapters/changelog_db.py` |
+| Upsert | `INSERT ... ON CONFLICT (email, role) DO UPDATE` with `COALESCE` for name/time_zone, `RETURNING id`; flips `email_source` back to `'crm'` on convergence | `adapters/users_db.py` (`upsert_user_from_crm`) |
+| Accounting | `SyncReport` (synced / skipped_admin_guard / quarantined) logged per cycle; runner tracks `last_success_at` and `consecutive_failures` | `crm/sync.py` |
+
+## Email Change Flow (admin-initiated)
+
+Both paths have identical semantics:
+
+1. **RabbitMQ path**: `user.email.change_requested` (CloudEvent, queue `events.user.email`) → `handle_email_change`. Idempotent on `ce-id` (unique `user_email_changelog.message_id`).
+2. **REST path**: `PATCH /api/users/id/{user_id}` with a new email → controller.
+
+Both write, in one transaction: `users.email` + `email_source='admin'`, the email contact, a `user_email_changelog` entry, and a `webhook_outbox` row (`user.email.changed` → CRM). The cache invalidation to event-admin fires only after commit.
+
+`email_source='admin'` arms the CRM-sync guard so the sync cannot resurrect the old email as a duplicate user. It flips back to `'crm'` only when the CRM export converges on the new email (upsert conflict), not when the webhook is merely delivered.
+
+## Webhook Outbox
+
+Two-phase poller, safe with multiple replicas: (1) claim a batch atomically (`status='processing'`, `next_retry_at` pushed by `WEBHOOK_VISIBILITY_TIMEOUT_SECONDS`, `FOR UPDATE SKIP LOCKED`), commit; (2) deliver each row and finalize (`delivered` / `pending` with quadratic backoff / `failed` after `max_attempts`).
 
 ## user_contacts
 
 Each user may have zero or more contacts. A contact is a `(channel, contact_id)` pair, unique per user.
 
 - **Channels**: `email` (auto-created on user create/update), `telegram`, `push`, etc.
-- **Population**: created via API (POST/PUT user with `contacts` array) or via CRM sync (contacts field in decrypted payload).
-- **Constraint**: `UNIQUE(user_id, channel)` -- one contact_id per channel per user.
-- **Cascade**: `ON DELETE CASCADE` from `users.id`.
+- **Population**: via API (`contacts` array) or CRM sync; upserts are batched into a single `unnest()` statement.
+- **Constraint**: `UNIQUE(user_id, channel)`; `ON DELETE CASCADE` from `users.id`.
 
 ## Runtime Dependencies
 
@@ -37,39 +62,21 @@ Each user may have zero or more contacts. A contact is a `(channel, contact_id)`
 |------------|---------|------------|
 | PostgreSQL (asyncpg) | User/contact storage | `POSTGRES_DSN` |
 | External CRM API | Source of truth for user data (when sync enabled) | `CRM_API_URL`, `CRM_API_TOKEN` |
+| RabbitMQ | `events.user.email` consumer (declares + binds the queue itself) | `RABBIT_URL` |
+| CRM webhook endpoint | Outbound `user.email.changed` delivery | `CRM_WEBHOOK_URL`, `CRM_WEBHOOK_TOKEN` |
 | event-admin | Cache invalidation notifications (outbound POST) | `EVENT_ADMIN_URL`, `EVENT_ADMIN_CACHE_TOKEN` |
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `POSTGRES_DSN` | Yes | -- | PostgreSQL connection string (async) |
-| `JWT_SECRET_KEY` | Yes | -- | HS256 secret for JWT verification |
-| `JWT_ALGORITHM` | No | `HS256` | JWT algorithm |
-| `API_BEARER_TOKEN` | No | -- | Static bearer token granting `role=admin` (alternative to JWT for service-to-service calls) |
-| `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated list of allowed CORS origins |
-| `CRM_API_URL` | Yes | -- | Base URL of CRM API |
-| `CRM_API_TOKEN` | Yes | -- | Bearer token for CRM API |
-| `CRM_ENCRYPTION_KEY` | Yes | -- | 64-char hex string (32-byte AES-256 key) |
-| `IS_SYNC_ENABLED` | No | `false` | Enable/disable CRM background sync |
-| `CRM_SYNC_INTERVAL_SECONDS` | No | `300` | Seconds between sync cycles |
-| `EVENT_ADMIN_URL` | No | -- | Base URL of event-admin service for cache invalidation |
-| `EVENT_ADMIN_CACHE_TOKEN` | No | -- | Bearer token for event-admin cache invalidation endpoint |
-| `DEBUG` | No | `false` | Enable debug mode / console log renderer |
-| `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
+See `.env.example` for the complete list with defaults. Required (no default): `POSTGRES_DSN`, `JWT_SECRET_KEY`, `CRM_API_URL`, `CRM_API_TOKEN`, `CRM_ENCRYPTION_KEY`.
 
-Source: `config.py:5-38`
+Notable optional vars: `JWT_AUDIENCE`/`JWT_ISSUER` (aud/iss claim binding — enforced only when set; coordinate with event-admin token minting), `API_BEARER_TOKEN` (static service token, grants `role=admin`, compared constant-time), `IS_CONSUMER_ENABLED` (default `true` — the queue is always bound, so a disabled consumer means unbounded accumulation), `CRM_SYNC_MAX_BACKOFF_SECONDS`, `WEBHOOK_VISIBILITY_TIMEOUT_SECONDS`.
 
 ## Known Limitations
 
-1. **No test coverage** -- no `tests/` directory exists. CRM decryption, auth middleware, and upsert idempotency are untested (`audit:HIGH`).
-2. **CRM decryption errors are unhandled** -- wrong key, bad base64, or corrupted payload crashes the sync iteration; outer loop swallows exception with no alerting (`audit:CRITICAL`, `crm/sync.py:30-55`).
-3. **Partial CRM sync** -- each user is upserted in a separate implicit transaction; a failure mid-page leaves committed partial data with no detection mechanism (`audit:HIGH`, `adapters/users_db.py:228-258`).
-4. **No exponential backoff** -- repeated CRM failures retry at the same fixed interval, now 300 s (`crm/sync.py:117-132`). Interval default fixed; backoff not yet implemented.
-5. **COALESCE in upsert prevents clearing fields** -- CRM-sent nulls for `name`/`time_zone` are silently ignored (`adapters/users_db.py:242-243`).
-6. **Double JWT validation** -- middleware + route dependency decode token independently; not DRY (`middleware.py` + `auth.py`).
-7. **`httpx.AsyncClient` created per CRM page** -- no connection reuse across pages or sync cycles (`crm/client.py:25`).
+1. **COALESCE in upsert prevents clearing fields** — intentional: CRM `null` means "not provided", not "clear this field" (`adapters/users_db.py`).
+2. **No index on `user_contacts.channel`** — channel-wide reverse lookups are unsupported; add the index with the first consumer that needs it.
+3. **App import requires a populated `.env`** — `Settings` has required fields with no defaults; tooling that imports `main.py` needs at least the values from `.env.example`.
+4. **`GET /roles/{role}/emails/{email}` was removed** — all callers use `GET /api/users/by-identity` (query params); the path-segment variant no longer exists.
 
-The following previously listed limitations have been resolved:
-- ~~CORS wildcard with credentials~~ — `CORS_ORIGINS` env var; safe default replaces wildcard.
-- ~~Health endpoint requires JWT~~ — `/health` is now in `public_paths` of `BearerAuthMiddleware`.
+For the full audit history and fix commits see `AUDIT.md`.

@@ -6,31 +6,37 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.16.0",
     "asyncpg>=0.31.0",
-    "cloudevents>=2.0.0",
-    "colorama>=0.4.6",
     "cryptography>=44.0.0",
     "dishka>=1.8.0",
     "email-validator>=2.2.0",
+    "event-schemas",
     "fastapi>=0.135.1",
     "faststream[rabbit]>=0.6.7",
     "greenlet>=3.2.4",
     "httpx>=0.28.0",
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.9",
-    "rich>=14.3.3",
     "sqlalchemy>=2.0.48",
     "structlog>=25.5.0",
-    "tenacity>=9.1.4",
     "ujson>=5.11.0",
     "uvicorn>=0.41.0",
 ]
+
+[tool.uv.sources]
+event-schemas = { path = "../event-schemas", editable = true }
 
 [dependency-groups]
 dev = [
     "code-review-graph>=2.3.1",
     "pre-commit>=4.5.1",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
     "ruff>=0.15.4",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 exclude = [".env", ".git", ".mypy_cache", ".pytest_cache", ".venv"]
@@ -49,7 +55,7 @@ select = ["ALL"]
 
 [tool.ruff.lint.extend-per-file-ignores]
 "__init__.py" = ["F401", "F403"]
-"tests/*.py" = ["ANN001", "ANN002", "ANN003", "ANN401", "PLR2004", "S101", "S311"]
+"tests/*.py" = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN401", "E402", "PLR2004", "S101", "S311"]
 
 [tool.ruff.lint.isort]
 no-lines-before = ["local-folder", "standard-library"]

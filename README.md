@@ -84,7 +84,7 @@ docker-compose up --build
 | `GET`  | `/api/users`                             | Список пользователей                |
 | `GET`  | `/api/users/id/{id}`                     | Получить пользователя по UUID       |
 | `PUT`  | `/api/users/id/{id}`                     | Обновить пользователя               |
-| `GET`  | `/api/users/roles/{role}/emails/{email}` | Получить пользователя по email+role |
+| `GET`  | `/api/users/by-identity`                 | Получить пользователя по email+role |
 | `GET`  | `/health`                                | Health check                        |
 
 #### Фильтрация и поиск (`GET /api/users`)
@@ -160,7 +160,7 @@ curl -X PUT http://localhost:8000/api/users/id/550e8400-e29b-41d4-a716-446655440
 
 ```bash
 curl -H 'Authorization: Bearer dev-token' \
-  'http://localhost:8000/api/users/roles/client/emails/user@example.com'
+  'http://localhost:8000/api/users/by-identity?email=user@example.com&role=client'
 ```
 
 ## Схема базы данных

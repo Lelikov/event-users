@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from faststream.rabbit import RabbitBroker, RabbitMessage, RabbitQueue
+from event_schemas.queues import EVENTS_EXCHANGE, USER_EMAIL_QUEUE
+from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitMessage, RabbitQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
@@ -25,14 +26,34 @@ async def handle_email_change(
     old_email: str,
     new_email: str,
     requested_by: str,
+    message_id: str | None = None,
 ) -> None:
-    """Process email change in a single transaction."""
+    """Process email change in a single transaction (idempotent on ce-id)."""
     async with sessionmaker() as session:
         try:
             sql: ISqlExecutor = SqlExecutor(session)
             changelog_db = EmailChangelogDBAdapter(sql)
 
             user_id = uuid.UUID(user_id_str)
+
+            # Idempotency gate first: the changelog insert conflicts on ce-id
+            # for redelivered messages — skip everything (no duplicate webhook,
+            # no phantom audit entry).
+            inserted = await changelog_db.add_entry(
+                user_id=user_id,
+                old_email=old_email,
+                new_email=new_email,
+                changed_by=requested_by,
+                message_id=message_id,
+            )
+            if not inserted:
+                await session.rollback()
+                logger.info(
+                    "Email change message already processed, skipping",
+                    user_id=user_id_str,
+                    message_id=message_id,
+                )
+                return
 
             # Update user email and set email_source = 'admin'
             await sql.execute(
@@ -53,14 +74,6 @@ async def handle_email_change(
                 DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
                 """,
                 {"user_id": user_id, "new_email": new_email},
-            )
-
-            # Add changelog entry
-            await changelog_db.add_entry(
-                user_id=user_id,
-                old_email=old_email,
-                new_email=new_email,
-                changed_by=requested_by,
             )
 
             # Add webhook outbox entry
@@ -104,18 +117,20 @@ class EmailChangeConsumer:
         self._broker = broker
         self._sessionmaker = sessionmaker
         self._cache_notifier = cache_notifier
+        # Exchange + queue + binding come from the canonical topology in
+        # event_schemas.queues (USER_EMAIL_QUEUE): declaring and binding here
+        # makes the consumer independent of event-receiver's startup order —
+        # on a fresh broker no user.email.* event is dropped.
+        self._exchange = RabbitExchange(EVENTS_EXCHANGE, type=ExchangeType.TOPIC, durable=True)
         self._queue = RabbitQueue(
-            "events.user.email",
+            USER_EMAIL_QUEUE.name,
             durable=True,
-            arguments={
-                "x-max-priority": 10,
-                "x-dead-letter-exchange": "events.dlx",
-                "x-dead-letter-routing-key": "events.user.email.dlq",
-            },
+            routing_key=str(USER_EMAIL_QUEUE.binding),
+            arguments=USER_EMAIL_QUEUE.arguments,
         )
 
     async def start(self) -> None:
-        @self._broker.subscriber(self._queue)
+        @self._broker.subscriber(self._queue, self._exchange)
         async def on_message(data: dict[str, Any], msg: RabbitMessage) -> None:
             headers = msg.headers or {}
             event_type = headers.get("ce-type", "")
@@ -133,6 +148,7 @@ class EmailChangeConsumer:
                 old_email=original["old_email"],
                 new_email=original["new_email"],
                 requested_by=original["requested_by"],
+                message_id=headers.get("ce-id"),
             )
 
         await self._broker.start()

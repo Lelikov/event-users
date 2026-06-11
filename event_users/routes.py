@@ -4,8 +4,9 @@ from typing import Annotated, Literal
 import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from event_users.auth import require_admin
+from event_users.auth import TokenPayload, require_admin
 from event_users.errors import ConflictError
 from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.changelog import IEmailChangelogDBAdapter
@@ -24,21 +25,27 @@ from event_users.schemas.users import (
 
 logger = structlog.get_logger(__name__)
 
-# Auth enforced globally by JWTAuthMiddleware; write routes additionally require admin role.
+# Every /api/users route (reads included — they expose PII) requires the admin
+# role; tokens are decoded once, in auth.verify_bearer_token.
 root_router = APIRouter(route_class=DishkaRoute)
-users_router = APIRouter(prefix="/api/users", tags=["users"], route_class=DishkaRoute)
+users_router = APIRouter(
+    prefix="/api/users",
+    tags=["users"],
+    route_class=DishkaRoute,
+    dependencies=[Depends(require_admin)],
+)
 
 
 @users_router.post(
     "",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
 )
 async def create_user(
     body: CreateUserRequest,
     controller: FromDishka[IUsersController],
     notifier: FromDishka[ICacheNotifier],
+    session: FromDishka[AsyncSession],
 ) -> UserResponse:
     try:
         dto = await controller.create_user(body.to_dto())
@@ -46,6 +53,9 @@ async def create_user(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    # Commit BEFORE invalidating: otherwise event-admin can repopulate its
+    # cache from the pre-change data while this transaction is still open.
+    await session.commit()
     await notifier.invalidate()
     return UserResponse.from_dto(dto)
 
@@ -53,22 +63,25 @@ async def create_user(
 @users_router.patch(
     "/id/{user_id}",
     response_model=UserResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def update_user(
     user_id: uuid.UUID,
     body: UpdateUserRequest,
     controller: FromDishka[IUsersController],
     notifier: FromDishka[ICacheNotifier],
+    session: FromDishka[AsyncSession],
+    admin: Annotated[TokenPayload, Depends(require_admin)],
 ) -> UserResponse:
     try:
-        dto = await controller.update_user(user_id, body.to_dto())
+        dto = await controller.update_user(user_id, body.to_dto(), changed_by=admin.sub)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     if dto is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
+    # Commit BEFORE invalidating (same ordering as the consumer path).
+    await session.commit()
     await notifier.invalidate()
     return UserResponse.from_dto(dto)
 
@@ -88,12 +101,17 @@ async def get_users_by_ids(
     return GetUsersByIdsResponse(items=[UserResponse.from_dto(u) for u in items])
 
 
-@users_router.get("/roles/{role}/emails/{email}", response_model=UserResponse)
-async def get_user_by_email_role(
+@users_router.get("/by-identity", response_model=UserResponse)
+async def get_user_by_identity(
     controller: FromDishka[IUsersController],
-    role: Literal["client", "organizer"],
-    email: str,
+    email: Annotated[str, Query(description="Exact email match")],
+    role: Annotated[Literal["client", "organizer"], Query(description="User role")],
 ) -> UserResponse:
+    """Exact-match lookup with the email in query params (not the URL path).
+
+    Emails contain '+', '.' and '%', which decode inconsistently across
+    proxies as path segments and end up in access logs.
+    """
     dto = await controller.get_user_by_email_role(email=email, role=role)
     if dto is None:
         raise HTTPException(

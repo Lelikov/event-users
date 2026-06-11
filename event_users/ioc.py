@@ -15,14 +15,14 @@ from event_users.adapters.cache_notifier import CacheNotifier
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
-from event_users.config import Settings
+from event_users.config import Settings, get_settings
 from event_users.consumer import EmailChangeConsumer
 from event_users.controllers.users import UsersController
 from event_users.crm.client import CrmClient
 from event_users.crm.sync import CrmSyncRunner
 from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.changelog import IEmailChangelogDBAdapter
-from event_users.interfaces.sql import ISqlExecutor, ISqlExecutorFactory
+from event_users.interfaces.sql import ISqlExecutor
 from event_users.interfaces.users import IUsersController, IUsersDBAdapter
 from event_users.webhook.client import CrmWebhookClient
 from event_users.webhook.sender import WebhookOutboxSender
@@ -34,7 +34,8 @@ logger = structlog.get_logger(__name__)
 class AppProvider(Provider):
     @provide(scope=Scope.APP)
     def provide_settings(self) -> Settings:
-        settings = Settings()
+        # Same singleton the auth/CORS code uses — settings are built exactly once.
+        settings = get_settings()
         logger.info(
             "Settings initialized",
             debug=settings.debug,
@@ -85,19 +86,16 @@ class AppProvider(Provider):
         return UsersDBAdapter(sql_executor)
 
     @provide(scope=Scope.REQUEST)
-    def provide_users_controller(self, db_adapter: IUsersDBAdapter) -> IUsersController:
-        return UsersController(db_adapter)
+    def provide_users_controller(
+        self,
+        db_adapter: IUsersDBAdapter,
+        changelog_adapter: IEmailChangelogDBAdapter,
+    ) -> IUsersController:
+        return UsersController(db_adapter, changelog_adapter)
 
     @provide(scope=Scope.REQUEST)
     def provide_changelog_adapter(self, sql_executor: ISqlExecutor) -> IEmailChangelogDBAdapter:
         return EmailChangelogDBAdapter(sql_executor)
-
-    @provide(scope=Scope.APP)
-    def provide_sql_executor_factory(self) -> ISqlExecutorFactory:
-        def factory(session: AsyncSession) -> ISqlExecutor:
-            return SqlExecutor(session)
-
-        return factory
 
     @provide(scope=Scope.APP)
     def provide_crm_client(self, settings: Settings) -> CrmClient:
@@ -118,6 +116,7 @@ class AppProvider(Provider):
             sessionmaker=sessionmaker,
             encryption_key=encryption_key,
             interval=settings.crm_sync_interval_seconds,
+            max_backoff=settings.crm_sync_max_backoff_seconds,
         )
 
     # ========== event-admin cache invalidation ==========
@@ -161,4 +160,5 @@ class AppProvider(Provider):
             webhook_client=webhook_client,
             poll_interval=settings.webhook_poll_interval_seconds,
             batch_size=settings.webhook_batch_size,
+            visibility_timeout=settings.webhook_visibility_timeout_seconds,
         )

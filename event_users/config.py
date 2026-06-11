@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from pydantic import Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,6 +16,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     jwt_secret_key: str = Field(...)
     jwt_algorithm: str = "HS256"
+    # Optional audience/issuer binding. When set, JWTs MUST carry matching
+    # aud/iss claims (tokens minted by event-admin). Left unset they are not
+    # verified, which keeps rollout backward-compatible.
+    jwt_audience: str | None = None
+    jwt_issuer: str | None = None
     api_bearer_token: str | None = None
     cors_origins: list[str] = ["http://localhost:5173"]
 
@@ -49,14 +56,16 @@ class Settings(BaseSettings):
         return v
 
     crm_sync_interval_seconds: int = 300  # 5 minutes
+    crm_sync_max_backoff_seconds: int = 1800  # cap for exponential backoff on repeated failures
 
     # event-admin cache invalidation
     event_admin_url: str = ""
     event_admin_cache_token: str = ""
 
-    # RabbitMQ consumer
+    # RabbitMQ consumer (the events.user.email queue exists unconditionally,
+    # so the consumer is on by default — otherwise messages accumulate forever)
     rabbit_url: str = "amqp://guest:guest@localhost:5672/"
-    is_consumer_enabled: bool = False
+    is_consumer_enabled: bool = True
 
     # CRM webhook
     crm_webhook_url: str = ""
@@ -64,3 +73,10 @@ class Settings(BaseSettings):
     is_webhook_enabled: bool = False
     webhook_poll_interval_seconds: int = 1
     webhook_batch_size: int = 10
+    webhook_visibility_timeout_seconds: int = 120  # re-delivery window for claimed-but-unfinished rows
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Single process-wide Settings instance (also used by the DI container)."""
+    return Settings()

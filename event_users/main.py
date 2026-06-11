@@ -9,13 +9,11 @@ from dishka.integrations.fastapi import FastapiProvider, setup_dishka
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from event_users.auth import get_settings
-from event_users.config import Settings
+from event_users.config import Settings, get_settings
 from event_users.consumer import EmailChangeConsumer
 from event_users.crm.sync import CrmSyncRunner
 from event_users.ioc import AppProvider
 from event_users.logger import setup_logger
-from event_users.middleware import BearerAuthMiddleware
 from event_users.routes import root_router
 from event_users.webhook.sender import WebhookOutboxSender
 
@@ -77,7 +75,8 @@ app = FastAPI(title="event-users", version="0.1.0", lifespan=lifespan)
 setup_dishka(container=container, app=app)
 app.include_router(root_router)
 
-app.add_middleware(BearerAuthMiddleware, public_paths=frozenset({"/health"}))
+# Auth is enforced per-router (require_admin on every /api/users route);
+# /health is intentionally public.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,

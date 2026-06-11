@@ -93,54 +93,32 @@ class UsersDBAdapter:
         return _user_from_row(row, contacts)
 
     async def _upsert_contacts(self, user_id: uuid.UUID, contacts: list[CreateUserContactDTO]) -> None:
-        for contact in contacts:
-            await self._sql.execute(
-                """
-                INSERT INTO user_contacts (user_id, channel, contact_id)
-                VALUES (:user_id, :channel, :contact_id)
-                ON CONFLICT (user_id, channel)
-                DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
-                """,
-                {"user_id": user_id, "channel": contact.channel, "contact_id": contact.contact_id},
-            )
+        if not contacts:
+            return
+        # One statement for the whole batch; dedupe by channel (last wins) so a
+        # single INSERT cannot touch the same (user_id, channel) row twice.
+        by_channel: dict[str, str] = {contact.channel: contact.contact_id for contact in contacts}
+        await self._sql.execute(
+            """
+            INSERT INTO user_contacts (user_id, channel, contact_id)
+            SELECT :user_id, t.channel, t.contact_id
+            FROM unnest(CAST(:channels AS text[]), CAST(:contact_ids AS text[])) AS t(channel, contact_id)
+            ON CONFLICT (user_id, channel)
+            DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
+            """,
+            {"user_id": user_id, "channels": list(by_channel), "contact_ids": list(by_channel.values())},
+        )
 
-    async def update_user(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> UserDTO | None:
-        set_clauses: list[str] = []
-        values: dict = {"user_id": user_id}
-
-        if dto.email is not None:
-            set_clauses.append("email = :email")
-            values["email"] = dto.email
-        if dto.name is not None:
-            set_clauses.append("name = :name")
-            values["name"] = dto.name
-        if dto.role is not None:
-            set_clauses.append("role = :role")
-            values["role"] = dto.role
-        if dto.time_zone is not None:
-            set_clauses.append("time_zone = :time_zone")
-            values["time_zone"] = dto.time_zone
-
-        if set_clauses:
-            set_clauses.append("updated_at = now()")
-            row = await self._sql.fetch_one(
-                f"""
-                UPDATE users
-                SET {", ".join(set_clauses)}
-                WHERE id = :user_id
-                RETURNING id, email, name, role, time_zone, created_at, updated_at
-                """,  # noqa: S608
-                values,
-            )
-            if row is None:
-                return None
-        else:
-            row = await self._sql.fetch_one(
-                "SELECT id, email, name, role, time_zone, created_at, updated_at FROM users WHERE id = :user_id",
-                {"user_id": user_id},
-            )
-            if row is None:
-                return None
+    async def update_user(
+        self,
+        user_id: uuid.UUID,
+        dto: UpdateUserDTO,
+        *,
+        mark_email_admin: bool = False,
+    ) -> UserDTO | None:
+        row = await self._apply_update(user_id, dto, mark_email_admin=mark_email_admin)
+        if row is None:
+            return None
 
         contacts_for_upsert: list[CreateUserContactDTO] = [
             *(dto.contacts or []),
@@ -151,6 +129,56 @@ class UsersDBAdapter:
         contacts = await self._fetch_contacts(user_id)
         logger.info("User updated", user_id=str(user_id))
         return _user_from_row(row, contacts)
+
+    async def _apply_update(
+        self,
+        user_id: uuid.UUID,
+        dto: UpdateUserDTO,
+        *,
+        mark_email_admin: bool = False,
+    ) -> RowMapping | None:
+        set_clauses: list[str] = []
+        values: dict = {"user_id": user_id}
+
+        if dto.email is not None:
+            set_clauses.append("email = :email")
+            values["email"] = dto.email
+        if mark_email_admin:
+            # Email changed via the admin API: arm the CRM-sync guard so the
+            # next sync cannot resurrect the old email as a duplicate user.
+            set_clauses.append("email_source = 'admin'")
+        if dto.name is not None:
+            set_clauses.append("name = :name")
+            values["name"] = dto.name
+        if dto.role is not None:
+            set_clauses.append("role = :role")
+            values["role"] = dto.role
+        if dto.time_zone is not None:
+            set_clauses.append("time_zone = :time_zone")
+            values["time_zone"] = dto.time_zone
+
+        if not set_clauses:
+            return await self._sql.fetch_one(
+                "SELECT id, email, name, role, time_zone, created_at, updated_at FROM users WHERE id = :user_id",
+                {"user_id": user_id},
+            )
+
+        set_clauses.append("updated_at = now()")
+        try:
+            return await self._sql.fetch_one(
+                f"""
+                UPDATE users
+                SET {", ".join(set_clauses)}
+                WHERE id = :user_id
+                RETURNING id, email, name, role, time_zone, created_at, updated_at
+                """,  # noqa: S608
+                values,
+            )
+        except IntegrityError as e:
+            logger.info("User update conflict", user_id=str(user_id), email=dto.email, role=dto.role)
+            raise ConflictError(
+                f"User with email={dto.email!r} and role={dto.role!r} already exists",
+            ) from e
 
     async def get_user(self, user_id: uuid.UUID) -> UserDTO | None:
         row = await self._sql.fetch_one(
@@ -180,8 +208,11 @@ class UsersDBAdapter:
         values: dict = {"limit": query.limit, "offset": query.offset}
 
         if query.email is not None:
-            conditions.append("email ILIKE :email")
-            values["email"] = f"%{query.email}%"
+            # Escape ILIKE metacharacters: '_' is legal in email local parts and
+            # '%'/'\' must not act as wildcards in a user-supplied search term.
+            escaped = query.email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("email ILIKE :email ESCAPE '\\'")
+            values["email"] = f"%{escaped}%"
         if query.role is not None:
             conditions.append("role = :role")
             values["role"] = query.role
@@ -267,7 +298,12 @@ class UsersDBAdapter:
         # COALESCE preserves existing values when CRM sends NULL. This is intentional:
         # CRM null means "not provided", not "clear this field".
         # If CRM semantics change, switch to direct assignment.
-        await self._sql.execute(
+        #
+        # A conflict means the CRM now exports exactly this (email, role), i.e.
+        # any pending admin email change has converged on the CRM side — so
+        # email_source flips back to 'crm' HERE, not when the webhook is merely
+        # delivered (the CRM-sync guard stays armed until convergence).
+        user_row = await self._sql.fetch_one(
             """
             INSERT INTO users (email, name, role, time_zone, email_source)
             VALUES (:email, :name, :role, :time_zone, 'crm')
@@ -275,21 +311,16 @@ class UsersDBAdapter:
             DO UPDATE SET
                 name = COALESCE(EXCLUDED.name, users.name),
                 time_zone = COALESCE(EXCLUDED.time_zone, users.time_zone),
+                email_source = 'crm',
                 updated_at = now()
-            WHERE users.email_source != 'admin'
+            RETURNING id
             """,
             {"email": email, "name": name, "role": role, "time_zone": time_zone},
         )
-
-        user_row = await self._sql.fetch_one(
-            "SELECT id FROM users WHERE email = :email AND role = :role",
-            {"email": email, "role": role},
-        )
-        if user_row is not None:
-            contacts_for_upsert: list[CreateUserContactDTO] = [
-                *(contacts or []),
-                CreateUserContactDTO(channel="email", contact_id=email),
-            ]
-            await self._upsert_contacts(user_row["id"], contacts_for_upsert)
+        contacts_for_upsert: list[CreateUserContactDTO] = [
+            *(contacts or []),
+            CreateUserContactDTO(channel="email", contact_id=email),
+        ]
+        await self._upsert_contacts(user_row["id"], contacts_for_upsert)
 
         logger.debug("User upserted from CRM", email=email, role=role)
