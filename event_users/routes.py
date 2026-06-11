@@ -5,7 +5,7 @@ import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from event_users.auth import require_admin
+from event_users.auth import TokenPayload, require_admin
 from event_users.errors import ConflictError
 from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.changelog import IEmailChangelogDBAdapter
@@ -64,9 +64,10 @@ async def update_user(
     body: UpdateUserRequest,
     controller: FromDishka[IUsersController],
     notifier: FromDishka[ICacheNotifier],
+    admin: Annotated[TokenPayload, Depends(require_admin)],
 ) -> UserResponse:
     try:
-        dto = await controller.update_user(user_id, body.to_dto())
+        dto = await controller.update_user(user_id, body.to_dto(), changed_by=admin.sub)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ConflictError as e:

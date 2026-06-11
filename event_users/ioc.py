@@ -86,8 +86,12 @@ class AppProvider(Provider):
         return UsersDBAdapter(sql_executor)
 
     @provide(scope=Scope.REQUEST)
-    def provide_users_controller(self, db_adapter: IUsersDBAdapter) -> IUsersController:
-        return UsersController(db_adapter)
+    def provide_users_controller(
+        self,
+        db_adapter: IUsersDBAdapter,
+        changelog_adapter: IEmailChangelogDBAdapter,
+    ) -> IUsersController:
+        return UsersController(db_adapter, changelog_adapter)
 
     @provide(scope=Scope.REQUEST)
     def provide_changelog_adapter(self, sql_executor: ISqlExecutor) -> IEmailChangelogDBAdapter:

@@ -13,7 +13,13 @@ from event_users.dto.users import (
 class IUsersDBAdapter(Protocol):
     async def create_user(self, dto: CreateUserDTO) -> UserDTO: ...
 
-    async def update_user(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> UserDTO | None: ...
+    async def update_user(
+        self,
+        user_id: uuid.UUID,
+        dto: UpdateUserDTO,
+        *,
+        mark_email_admin: bool = False,
+    ) -> UserDTO | None: ...
 
     async def get_user(self, user_id: uuid.UUID) -> UserDTO | None: ...
 
@@ -36,7 +42,13 @@ class IUsersDBAdapter(Protocol):
 class IUsersController(Protocol):
     async def create_user(self, dto: CreateUserDTO) -> UserDTO: ...
 
-    async def update_user(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> UserDTO | None: ...
+    async def update_user(
+        self,
+        user_id: uuid.UUID,
+        dto: UpdateUserDTO,
+        *,
+        changed_by: str = "api",
+    ) -> UserDTO | None: ...
 
     async def get_user(self, user_id: uuid.UUID) -> UserDTO | None: ...
 

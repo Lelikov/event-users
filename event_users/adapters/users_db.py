@@ -104,8 +104,14 @@ class UsersDBAdapter:
                 {"user_id": user_id, "channel": contact.channel, "contact_id": contact.contact_id},
             )
 
-    async def update_user(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> UserDTO | None:
-        row = await self._apply_update(user_id, dto)
+    async def update_user(
+        self,
+        user_id: uuid.UUID,
+        dto: UpdateUserDTO,
+        *,
+        mark_email_admin: bool = False,
+    ) -> UserDTO | None:
+        row = await self._apply_update(user_id, dto, mark_email_admin=mark_email_admin)
         if row is None:
             return None
 
@@ -119,13 +125,23 @@ class UsersDBAdapter:
         logger.info("User updated", user_id=str(user_id))
         return _user_from_row(row, contacts)
 
-    async def _apply_update(self, user_id: uuid.UUID, dto: UpdateUserDTO) -> RowMapping | None:
+    async def _apply_update(
+        self,
+        user_id: uuid.UUID,
+        dto: UpdateUserDTO,
+        *,
+        mark_email_admin: bool = False,
+    ) -> RowMapping | None:
         set_clauses: list[str] = []
         values: dict = {"user_id": user_id}
 
         if dto.email is not None:
             set_clauses.append("email = :email")
             values["email"] = dto.email
+        if mark_email_admin:
+            # Email changed via the admin API: arm the CRM-sync guard so the
+            # next sync cannot resurrect the old email as a duplicate user.
+            set_clauses.append("email_source = 'admin'")
         if dto.name is not None:
             set_clauses.append("name = :name")
             values["name"] = dto.name
