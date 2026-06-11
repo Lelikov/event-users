@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from event_users.auth import TokenPayload, require_admin
 from event_users.errors import ConflictError
@@ -44,6 +45,7 @@ async def create_user(
     body: CreateUserRequest,
     controller: FromDishka[IUsersController],
     notifier: FromDishka[ICacheNotifier],
+    session: FromDishka[AsyncSession],
 ) -> UserResponse:
     try:
         dto = await controller.create_user(body.to_dto())
@@ -51,6 +53,9 @@ async def create_user(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    # Commit BEFORE invalidating: otherwise event-admin can repopulate its
+    # cache from the pre-change data while this transaction is still open.
+    await session.commit()
     await notifier.invalidate()
     return UserResponse.from_dto(dto)
 
@@ -64,6 +69,7 @@ async def update_user(
     body: UpdateUserRequest,
     controller: FromDishka[IUsersController],
     notifier: FromDishka[ICacheNotifier],
+    session: FromDishka[AsyncSession],
     admin: Annotated[TokenPayload, Depends(require_admin)],
 ) -> UserResponse:
     try:
@@ -74,6 +80,8 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     if dto is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
+    # Commit BEFORE invalidating (same ordering as the consumer path).
+    await session.commit()
     await notifier.invalidate()
     return UserResponse.from_dto(dto)
 
