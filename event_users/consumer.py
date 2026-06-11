@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+from event_schemas.queues import EVENTS_EXCHANGE, USER_EMAIL_QUEUE
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitMessage, RabbitQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -116,20 +117,16 @@ class EmailChangeConsumer:
         self._broker = broker
         self._sessionmaker = sessionmaker
         self._cache_notifier = cache_notifier
-        # Exchange + queue + binding mirror the canonical topology in
+        # Exchange + queue + binding come from the canonical topology in
         # event_schemas.queues (USER_EMAIL_QUEUE): declaring and binding here
         # makes the consumer independent of event-receiver's startup order —
         # on a fresh broker no user.email.* event is dropped.
-        self._exchange = RabbitExchange("events", type=ExchangeType.TOPIC, durable=True)
+        self._exchange = RabbitExchange(EVENTS_EXCHANGE, type=ExchangeType.TOPIC, durable=True)
         self._queue = RabbitQueue(
-            "events.user.email",
+            USER_EMAIL_QUEUE.name,
             durable=True,
-            routing_key="events.user.email",
-            arguments={
-                "x-max-priority": 10,
-                "x-dead-letter-exchange": "events.dlx",
-                "x-dead-letter-routing-key": "events.user.email.dlq",
-            },
+            routing_key=str(USER_EMAIL_QUEUE.binding),
+            arguments=USER_EMAIL_QUEUE.arguments,
         )
 
     async def start(self) -> None:
