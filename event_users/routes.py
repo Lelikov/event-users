@@ -4,7 +4,9 @@ from typing import Annotated, Literal
 import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from event_users.auth import TokenPayload, require_admin
 from event_users.errors import ConflictError
@@ -167,12 +169,35 @@ async def get_email_changelog(
     )
 
 
-health_router = APIRouter(tags=["health"])
+health_router = APIRouter(tags=["health"], route_class=DishkaRoute)
+
+READY_CHECK_QUERY = "select 1"
 
 
 @health_router.get("/health")
 async def health() -> dict:
+    """Liveness probe: the process is up and serving HTTP. No dependency calls."""
     return {"status": "ok"}
+
+
+@health_router.get("/ready")
+async def ready(engine: FromDishka[AsyncEngine]) -> JSONResponse:
+    """Readiness probe: verifies PostgreSQL connectivity (the only critical dependency)."""
+    database_ok = False
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text(READY_CHECK_QUERY))
+        database_ok = True
+    except Exception:
+        logger.exception("Readiness check failed: database unreachable")
+
+    checks = {"database": database_ok}
+    if not database_ok:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "checks": checks},
+        )
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ready", "checks": checks})
 
 
 root_router.include_router(users_router)

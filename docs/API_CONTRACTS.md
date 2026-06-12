@@ -236,7 +236,7 @@ event-notifier currently resolves recipients via `GET /api/users?email=…&role=
 
 ### GET /health
 
-Health check endpoint.
+Liveness probe (k8s `livenessProbe`): the process serves HTTP. Never calls dependencies.
 
 | Aspect | Detail |
 |--------|--------|
@@ -249,4 +249,26 @@ Health check endpoint.
 {"status": "ok"}
 ```
 
-Unauthenticated liveness and readiness probes (Kubernetes, load balancers) receive `200` without providing any token.
+---
+
+### GET /ready
+
+Readiness probe (k8s `readinessProbe`): `SELECT 1` against PostgreSQL.
+
+| Aspect | Detail |
+|--------|--------|
+| Auth | None |
+| Status | 200 OK / 503 Service Unavailable |
+| Source | `routes.py` (`health_router`) |
+
+**Response** (`200`):
+```json
+{"status": "ready", "checks": {"database": true}}
+```
+
+**Response** (`503`, database down):
+```json
+{"status": "not_ready", "checks": {"database": false}}
+```
+
+Unauthenticated liveness and readiness probes (Kubernetes, load balancers) receive responses without providing any token.
