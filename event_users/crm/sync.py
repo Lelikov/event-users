@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from event_users import metrics
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
 from event_users.adapters.users_db import UsersDBAdapter
@@ -164,6 +165,9 @@ class CrmSyncService:
             page += 1
 
         report = SyncReport(synced=synced, skipped_admin_guard=skipped, quarantined=quarantined)
+        metrics.CRM_SYNC_RECORDS_TOTAL.labels(outcome="synced").inc(report.synced)
+        metrics.CRM_SYNC_RECORDS_TOTAL.labels(outcome="skipped_admin_guard").inc(report.skipped_admin_guard)
+        metrics.CRM_SYNC_RECORDS_TOTAL.labels(outcome="quarantined").inc(report.quarantined)
         logger.info(
             "CRM user sync completed",
             synced=report.synced,
@@ -220,10 +224,12 @@ class CrmSyncRunner:
                 await self._run_once()
                 self.consecutive_failures = 0
                 self.last_success_at = datetime.now(UTC)
+                metrics.CRM_SYNC_CYCLES_TOTAL.labels(outcome="ok").inc()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 self.consecutive_failures += 1
+                metrics.CRM_SYNC_CYCLES_TOTAL.labels(outcome="error").inc()
                 logger.exception(
                     "CRM sync cycle failed",
                     consecutive_failures=self.consecutive_failures,

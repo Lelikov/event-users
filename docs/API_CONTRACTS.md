@@ -272,3 +272,23 @@ Readiness probe (k8s `readinessProbe`): `SELECT 1` against PostgreSQL.
 ```
 
 Unauthenticated liveness and readiness probes (Kubernetes, load balancers) receive responses without providing any token.
+
+### GET /metrics
+
+Prometheus exposition endpoint (`prometheus_client.generate_latest`); `/metrics` and `/health`
+are excluded from the RED counters.
+
+| Aspect | Detail |
+|--------|--------|
+| Auth | None |
+| Status | 200 OK, `text/plain; version=0.0.4; charset=utf-8` |
+| Source | `routes.py` (`health_router`), `metrics.py` |
+
+**Exposed metrics**:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | `method`, `route` (route template, `unmatched` for 404s), `status` |
+| `http_request_duration_seconds` | histogram | `method`, `route` |
+| `users_crm_sync_records_total` | counter | `outcome` (synced/skipped_admin_guard/quarantined) |
+| `users_crm_sync_cycles_total` | counter | `outcome` (ok/error) |

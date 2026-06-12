@@ -4,10 +4,11 @@ from typing import Annotated, Literal
 import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from event_users import metrics
 from event_users.auth import TokenPayload, require_admin
 from event_users.errors import ConflictError
 from event_users.interfaces.cache_notifier import ICacheNotifier
@@ -178,6 +179,12 @@ READY_CHECK_QUERY = "select 1"
 async def health() -> dict:
     """Liveness probe: the process is up and serving HTTP. No dependency calls."""
     return {"status": "ok"}
+
+
+@health_router.get("/metrics")
+async def metrics_endpoint() -> Response:
+    """Prometheus exposition endpoint."""
+    return metrics.metrics_response()
 
 
 @health_router.get("/ready")

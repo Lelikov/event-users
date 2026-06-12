@@ -14,6 +14,7 @@ from event_users.consumer import EmailChangeConsumer
 from event_users.crm.sync import CrmSyncRunner
 from event_users.ioc import AppProvider
 from event_users.logger import setup_logger
+from event_users.metrics import HttpMetricsMiddleware
 from event_users.routes import root_router
 from event_users.webhook.sender import WebhookOutboxSender
 
@@ -84,3 +85,4 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(HttpMetricsMiddleware)

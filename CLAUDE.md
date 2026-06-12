@@ -61,6 +61,7 @@ Layered async FastAPI service for managing users and syncing them from an extern
 - **`webhook/`** — transactional outbox poller delivering `user.email.changed` to CRM (two-phase claim + deliver, multi-replica safe)
 - **`adapters/changelog_db.py`** — email change audit log + webhook outbox writes
 - **`auth.py`** — single token decode path (static service token or HS256 JWT, optional aud/iss); `require_admin` gates the entire `/api/users` router
+- **`metrics.py`** — Prometheus metrics: HTTP RED middleware (`http_requests_total`, `http_request_duration_seconds` by route template; `/metrics` + `/health` excluded), `users_crm_sync_records_total{outcome}`, `users_crm_sync_cycles_total{outcome}`; exposed at `GET /metrics`
 
 **CRM background sync:**
 - Runs every 5 minutes (exponential backoff on failures, capped) as an asyncio background task started in `lifespan`
