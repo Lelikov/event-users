@@ -72,6 +72,10 @@ See `.env.example` for the complete list with defaults. Required (no default): `
 
 Notable optional vars: `JWT_AUDIENCE`/`JWT_ISSUER` (aud/iss claim binding — enforced only when set; coordinate with event-admin token minting), `API_BEARER_TOKEN` (static service token, grants `role=admin`, compared constant-time), `IS_CONSUMER_ENABLED` (default `true` — the queue is always bound, so a disabled consumer means unbounded accumulation), `CRM_SYNC_MAX_BACKOFF_SECONDS`, `WEBHOOK_VISIBILITY_TIMEOUT_SECONDS`.
 
+## Tracing
+
+OpenTelemetry auto-instrumentation (FastAPI, httpx, asyncpg, RabbitMQ via FastStream middleware); exported via OTLP/gRPC to the collector → Tempo; gated by `OTEL_SDK_DISABLED` (off by default).
+
 ## Known Limitations
 
 1. **COALESCE in upsert prevents clearing fields** — intentional: CRM `null` means "not provided", not "clear this field" (`adapters/users_db.py`).
