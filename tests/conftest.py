@@ -8,6 +8,7 @@ sibling services' suites).
 import os
 
 
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 os.environ.setdefault("API_BEARER_TOKEN", "test-static-token")
 os.environ.setdefault("POSTGRES_DSN", "postgresql+asyncpg://test:test@localhost:5432/test")

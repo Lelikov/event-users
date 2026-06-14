@@ -24,6 +24,7 @@ from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.changelog import IEmailChangelogDBAdapter
 from event_users.interfaces.sql import ISqlExecutor
 from event_users.interfaces.users import IUsersController, IUsersDBAdapter
+from event_users.telemetry import rabbit_telemetry_middlewares
 from event_users.webhook.client import CrmWebhookClient
 from event_users.webhook.sender import WebhookOutboxSender
 
@@ -130,7 +131,7 @@ class AppProvider(Provider):
 
     @provide(scope=Scope.APP)
     def provide_rabbit_broker(self, settings: Settings) -> RabbitBroker:
-        return RabbitBroker(str(settings.rabbit_url))
+        return RabbitBroker(str(settings.rabbit_url), middlewares=[*rabbit_telemetry_middlewares()])
 
     @provide(scope=Scope.APP)
     def provide_email_change_consumer(

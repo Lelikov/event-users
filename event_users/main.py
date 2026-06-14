@@ -16,6 +16,7 @@ from event_users.ioc import AppProvider
 from event_users.logger import setup_logger
 from event_users.metrics import HttpMetricsMiddleware
 from event_users.routes import root_router
+from event_users.telemetry import instrument_asyncpg, instrument_fastapi, setup_tracing
 from event_users.webhook.sender import WebhookOutboxSender
 
 
@@ -73,6 +74,9 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(title="event-users", version="0.1.0", lifespan=lifespan)
+setup_tracing()
+instrument_fastapi(app)
+instrument_asyncpg()
 setup_dishka(container=container, app=app)
 app.include_router(root_router)
 
