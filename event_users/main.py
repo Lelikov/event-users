@@ -1,6 +1,5 @@
-import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from logging import getLevelNamesMapping
 
 import structlog
@@ -11,13 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from event_users.config import Settings, get_settings
 from event_users.consumer import EmailChangeConsumer
-from event_users.crm.sync import CrmSyncRunner
 from event_users.ioc import AppProvider
 from event_users.logger import setup_logger
 from event_users.metrics import HttpMetricsMiddleware
 from event_users.routes import root_router
 from event_users.telemetry import instrument_asyncpg, instrument_fastapi, setup_tracing
-from event_users.webhook.sender import WebhookOutboxSender
 
 
 container = make_async_container(AppProvider(), FastapiProvider())
@@ -35,40 +32,17 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         log_level=settings.log_level,
         debug=settings.debug,
     )
-    sync_task = None
-    if settings.is_sync_enabled:
-        sync_runner = await container.get(CrmSyncRunner)
-        sync_task = asyncio.create_task(sync_runner.run(), name="crm-sync")
-        logger.info(
-            "CRM sync background task started",
-            interval_seconds=settings.crm_sync_interval_seconds,
-        )
-
     email_consumer = None
     if settings.is_consumer_enabled:
         email_consumer = await container.get(EmailChangeConsumer)
         await email_consumer.start()
         logger.info("Email change consumer started")
 
-    webhook_task = None
-    if settings.is_webhook_enabled:
-        webhook_sender = await container.get(WebhookOutboxSender)
-        webhook_task = asyncio.create_task(webhook_sender.run(), name="webhook-outbox")
-        logger.info("Webhook outbox sender started")
-
     yield
 
     logger.info("Shutting down event-users application")
-    if sync_task is not None:
-        sync_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await sync_task
     if email_consumer is not None:
         await email_consumer.stop()
-    if webhook_task is not None:
-        webhook_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await webhook_task
     await container.close()
     logger.info("Event-users application shutdown complete")
 

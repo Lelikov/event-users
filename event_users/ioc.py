@@ -20,15 +20,11 @@ from event_users.adapters.users_db import UsersDBAdapter
 from event_users.config import Settings, get_settings
 from event_users.consumer import EmailChangeConsumer
 from event_users.controllers.users import UsersController
-from event_users.crm.client import CrmClient
-from event_users.crm.sync import CrmSyncRunner
 from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.changelog import IEmailChangelogDBAdapter
 from event_users.interfaces.sql import ISqlExecutor
 from event_users.interfaces.users import IUsersController, IUsersDBAdapter
 from event_users.telemetry import rabbit_telemetry_middlewares
-from event_users.webhook.client import CrmWebhookClient
-from event_users.webhook.sender import WebhookOutboxSender
 
 
 logger = structlog.get_logger(__name__)
@@ -100,28 +96,6 @@ class AppProvider(Provider):
     def provide_changelog_adapter(self, sql_executor: ISqlExecutor) -> IEmailChangelogDBAdapter:
         return EmailChangelogDBAdapter(sql_executor)
 
-    @provide(scope=Scope.APP)
-    def provide_crm_client(self, settings: Settings) -> CrmClient:
-        logger.info("Providing CrmClient", crm_url=settings.crm_api_url)
-        return CrmClient(api_url=settings.crm_api_url, api_token=settings.crm_api_token)
-
-    @provide(scope=Scope.APP)
-    def provide_crm_sync_runner(
-        self,
-        settings: Settings,
-        crm_client: CrmClient,
-        sessionmaker: async_sessionmaker[AsyncSession],
-    ) -> CrmSyncRunner:
-        encryption_key = bytes.fromhex(settings.crm_encryption_key)
-        logger.info("Providing CrmSyncRunner", interval=settings.crm_sync_interval_seconds)
-        return CrmSyncRunner(
-            crm_client=crm_client,
-            sessionmaker=sessionmaker,
-            encryption_key=encryption_key,
-            interval=settings.crm_sync_interval_seconds,
-            max_backoff=settings.crm_sync_max_backoff_seconds,
-        )
-
     # ========== event-admin cache invalidation ==========
 
     @provide(scope=Scope.APP)
@@ -153,26 +127,4 @@ class AppProvider(Provider):
             sessionmaker=sessionmaker,
             cache_notifier=cache_notifier,
             sync_publisher=sync_publisher,
-        )
-
-    # ========== CRM webhook outbox ==========
-
-    @provide(scope=Scope.APP)
-    async def provide_webhook_client(self, settings: Settings) -> AsyncGenerator[CrmWebhookClient]:
-        async with AsyncClient(base_url=settings.crm_webhook_url, timeout=30) as client:
-            yield CrmWebhookClient(http_client=client, token=settings.crm_webhook_token)
-
-    @provide(scope=Scope.APP)
-    def provide_webhook_sender(
-        self,
-        settings: Settings,
-        sessionmaker: async_sessionmaker[AsyncSession],
-        webhook_client: CrmWebhookClient,
-    ) -> WebhookOutboxSender:
-        return WebhookOutboxSender(
-            sessionmaker=sessionmaker,
-            webhook_client=webhook_client,
-            poll_interval=settings.webhook_poll_interval_seconds,
-            batch_size=settings.webhook_batch_size,
-            visibility_timeout=settings.webhook_visibility_timeout_seconds,
         )
