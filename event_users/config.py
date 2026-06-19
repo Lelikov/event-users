@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     # so the consumer is on by default — otherwise messages accumulate forever)
     rabbit_url: str = "amqp://guest:guest@localhost:5672/"
     is_consumer_enabled: bool = True
+    rabbit_publish_timeout: float = 10.0
 
     # CRM webhook
     crm_webhook_url: str = ""

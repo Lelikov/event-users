@@ -5,12 +5,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+from event_schemas.envelope import unwrap_payload
 from event_schemas.queues import EVENTS_EXCHANGE, USER_EMAIL_QUEUE
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitMessage, RabbitQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
+from event_users.adapters.sync_publisher import UserSyncedPublisher
+from event_users.adapters.users_db import UsersDBAdapter
+from event_users.dto.users import CreateUserContactDTO
 from event_users.interfaces.cache_notifier import ICacheNotifier
 from event_users.interfaces.sql import ISqlExecutor
 
@@ -104,6 +108,37 @@ async def handle_email_change(
             raise
 
 
+async def handle_user_upserted(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    sync_publisher: UserSyncedPublisher,
+    email: str,
+    role: str,
+    time_zone: str | None,
+    name: str | None,
+    contacts: list,
+    message_id: str | None,  # noqa: ARG001  (kept for call-site symmetry; ce-id is derived in the publisher)
+) -> None:
+    """Upsert a user from a db-sync ``user.upserted`` event, then emit ``user.synced`` after commit.
+
+    cal.com is the source of truth; we upsert by (email, role) and publish the resulting
+    ``user_id`` so event-saver can backfill bookings. Publish happens AFTER commit: a dropped
+    publish is self-healing via the reconcile sweep + deterministic ce-id.
+    """
+    contact_dtos = [CreateUserContactDTO(channel=c["channel"], contact_id=c["contact_id"]) for c in contacts]
+    async with sessionmaker() as session:
+        adapter = UsersDBAdapter(SqlExecutor(session))
+        user_id = await adapter.upsert_user_from_crm(
+            email=email,
+            role=role,
+            time_zone=time_zone,
+            name=name,
+            contacts=contact_dtos,
+        )
+        await session.commit()
+    await sync_publisher.publish(email=email, role=role, user_id=str(user_id), time_zone=time_zone)
+
+
 class EmailChangeConsumer:
     """Manages RabbitMQ subscription for email change events."""
 
@@ -113,10 +148,12 @@ class EmailChangeConsumer:
         broker: RabbitBroker,
         sessionmaker: async_sessionmaker[AsyncSession],
         cache_notifier: ICacheNotifier,
+        sync_publisher: UserSyncedPublisher,
     ) -> None:
         self._broker = broker
         self._sessionmaker = sessionmaker
         self._cache_notifier = cache_notifier
+        self._sync_publisher = sync_publisher
         # Exchange + queue + binding come from the canonical topology in
         # event_schemas.queues (USER_EMAIL_QUEUE): declaring and binding here
         # makes the consumer independent of event-receiver's startup order —
@@ -135,21 +172,34 @@ class EmailChangeConsumer:
             headers = msg.headers or {}
             event_type = headers.get("ce-type", "")
 
-            if event_type != "user.email.change_requested":
-                logger.warning("Unknown event type, skipping", event_type=event_type)
+            if event_type == "user.email.change_requested":
+                original = unwrap_payload(data)
+                await handle_email_change(
+                    sessionmaker=self._sessionmaker,
+                    cache_notifier=self._cache_notifier,
+                    user_id_str=original["user_id"],
+                    old_email=original["old_email"],
+                    new_email=original["new_email"],
+                    requested_by=original["requested_by"],
+                    message_id=headers.get("ce-id"),
+                )
                 return
 
-            # event-receiver wraps payload in {"original": {...}, "normalized": {...}}
-            original = data.get("original", data)
-            await handle_email_change(
-                sessionmaker=self._sessionmaker,
-                cache_notifier=self._cache_notifier,
-                user_id_str=original["user_id"],
-                old_email=original["old_email"],
-                new_email=original["new_email"],
-                requested_by=original["requested_by"],
-                message_id=headers.get("ce-id"),
-            )
+            if event_type == "user.upserted":
+                original = unwrap_payload(data)
+                await handle_user_upserted(
+                    sessionmaker=self._sessionmaker,
+                    sync_publisher=self._sync_publisher,
+                    email=original["email"],
+                    role=original["role"],
+                    time_zone=original.get("time_zone"),
+                    name=original.get("name"),
+                    contacts=original.get("contacts", []),
+                    message_id=headers.get("ce-id"),
+                )
+                return
+
+            logger.warning("Unknown event type, skipping", event_type=event_type)
 
         await self._broker.start()
         logger.info("Email change consumer started")

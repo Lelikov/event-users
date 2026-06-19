@@ -2,7 +2,8 @@ from collections.abc import AsyncGenerator
 
 import structlog
 from dishka import Provider, Scope, provide
-from faststream.rabbit import RabbitBroker
+from event_schemas.queues import EVENTS_EXCHANGE
+from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 from event_users.adapters.cache_notifier import CacheNotifier
 from event_users.adapters.changelog_db import EmailChangelogDBAdapter
 from event_users.adapters.sql import SqlExecutor
+from event_users.adapters.sync_publisher import UserSyncedPublisher
 from event_users.adapters.users_db import UsersDBAdapter
 from event_users.config import Settings, get_settings
 from event_users.consumer import EmailChangeConsumer
@@ -134,13 +136,24 @@ class AppProvider(Provider):
         return RabbitBroker(str(settings.rabbit_url), middlewares=[*rabbit_telemetry_middlewares()])
 
     @provide(scope=Scope.APP)
+    def provide_sync_publisher(self, broker: RabbitBroker, settings: Settings) -> UserSyncedPublisher:
+        exchange = RabbitExchange(EVENTS_EXCHANGE, type=ExchangeType.TOPIC, durable=True)
+        return UserSyncedPublisher(broker=broker, exchange=exchange, publish_timeout=settings.rabbit_publish_timeout)
+
+    @provide(scope=Scope.APP)
     def provide_email_change_consumer(
         self,
         broker: RabbitBroker,
         sessionmaker: async_sessionmaker[AsyncSession],
         cache_notifier: ICacheNotifier,
+        sync_publisher: UserSyncedPublisher,
     ) -> EmailChangeConsumer:
-        return EmailChangeConsumer(broker=broker, sessionmaker=sessionmaker, cache_notifier=cache_notifier)
+        return EmailChangeConsumer(
+            broker=broker,
+            sessionmaker=sessionmaker,
+            cache_notifier=cache_notifier,
+            sync_publisher=sync_publisher,
+        )
 
     # ========== CRM webhook outbox ==========
 
