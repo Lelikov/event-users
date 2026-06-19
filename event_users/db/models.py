@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from event_users.db.base import Base
@@ -101,43 +101,4 @@ class UserEmailChangelog(Base):
         Index("ix_user_email_changelog_user_id", "user_id"),
         Index("ix_user_email_changelog_changed_at", "changed_at"),
         Index("uq_user_email_changelog_message_id", "message_id", unique=True),
-    )
-
-
-class WebhookOutbox(Base):
-    __tablename__ = "webhook_outbox"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("5"))
-    next_retry_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=text("now()"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=text("now()"),
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    __table_args__ = (
-        Index(
-            "ix_webhook_outbox_pending",
-            "status",
-            "next_retry_at",
-            postgresql_where=text("status IN ('pending', 'processing')"),
-        ),
     )
