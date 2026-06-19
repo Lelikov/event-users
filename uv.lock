@@ -413,23 +413,9 @@ wheels = [
 [[package]]
 name = "event-schemas"
 version = "0.4.0"
-source = { editable = "../event-schemas" }
+source = { git = "https://github.com/Lelikov/event-schemas.git?tag=v0.4.0#7b8aa0563b3d393ca449a960662cc11f11473dc5" }
 dependencies = [
     { name = "pydantic", extra = ["email"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "pydantic", extras = ["email"], specifier = ">=2.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "code-review-graph", specifier = ">=2.3.1" },
-    { name = "pytest", specifier = ">=8.0" },
 ]
 
 [[package]]
@@ -479,7 +465,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "dishka", specifier = ">=1.8.0" },
     { name = "email-validator", specifier = ">=2.2.0" },
-    { name = "event-schemas", editable = "../event-schemas" },
+    { name = "event-schemas", git = "https://github.com/Lelikov/event-schemas.git?tag=v0.4.0" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "faststream", extras = ["rabbit"], specifier = ">=0.6.7" },
     { name = "greenlet", specifier = ">=3.2.4" },
