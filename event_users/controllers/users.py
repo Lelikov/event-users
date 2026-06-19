@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from event_users.dto.users import CreateUserDTO, ListUsersQueryDTO, UpdateUserDTO, UserDTO
@@ -43,8 +42,7 @@ class UsersController:
             return await self._db.update_user(user_id, dto)
 
         # Email change: same semantics as the RabbitMQ consumer path —
-        # email_source='admin', changelog entry, CRM webhook outbox row,
-        # all inside the request transaction.
+        # email_source='admin' + changelog entry, all inside the request transaction.
         updated = await self._db.update_user(user_id, dto, mark_email_admin=True)
         if updated is None:
             return None
@@ -53,15 +51,6 @@ class UsersController:
             old_email=current.email,
             new_email=dto.email,
             changed_by=changed_by,
-        )
-        await self._changelog.add_webhook_outbox(
-            event_type="user.email.changed",
-            payload={
-                "user_id": str(user_id),
-                "old_email": current.email,
-                "new_email": dto.email,
-                "changed_at": datetime.now(UTC).isoformat(),
-            },
         )
         return updated
 

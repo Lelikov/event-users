@@ -12,12 +12,7 @@ os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 os.environ.setdefault("API_BEARER_TOKEN", "test-static-token")
 os.environ.setdefault("POSTGRES_DSN", "postgresql+asyncpg://test:test@localhost:5432/test")
-os.environ.setdefault("CRM_API_URL", "https://crm.test")
-os.environ.setdefault("CRM_API_TOKEN", "test-crm-token")
-os.environ.setdefault("CRM_ENCRYPTION_KEY", "00" * 32)
-os.environ.setdefault("IS_SYNC_ENABLED", "false")
 os.environ.setdefault("IS_CONSUMER_ENABLED", "false")
-os.environ.setdefault("IS_WEBHOOK_ENABLED", "false")
 
 from typing import Self
 

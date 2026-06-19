@@ -1,11 +1,10 @@
-"""Tests for the /metrics endpoint, HTTP RED middleware and CRM sync counters."""
+"""Tests for the /metrics endpoint and HTTP RED middleware."""
 
 from fastapi import FastAPI
 from prometheus_client import REGISTRY
 from starlette.testclient import TestClient
 
 from event_users import metrics, routes
-from tests.crm.test_sync import encrypt, make_service
 
 
 def _sample(name: str, labels: dict[str, str]) -> float:
@@ -73,25 +72,3 @@ class TestHttpRedMiddleware:
 
         assert _sample("http_requests_total", {"method": "GET", "route": "/health", "status": "200"}) == 0.0
         assert _sample("http_requests_total", {"method": "GET", "route": "/metrics", "status": "200"}) == 0.0
-
-
-class TestCrmSyncCounters:
-    async def test_sync_increments_record_outcomes(self) -> None:
-        pages = [
-            encrypt(
-                [
-                    {"email": "a@b.c", "role": "client"},
-                    {"role": "missing-email"},  # quarantined: no email key
-                ],
-            ),
-        ]
-        service, _session, _db = make_service(pages)
-        synced_before = _sample("users_crm_sync_records_total", {"outcome": "synced"})
-        quarantined_before = _sample("users_crm_sync_records_total", {"outcome": "quarantined"})
-
-        report = await service.sync()
-
-        assert report.synced == 1
-        assert report.quarantined == 1
-        assert _sample("users_crm_sync_records_total", {"outcome": "synced"}) == synced_before + 1
-        assert _sample("users_crm_sync_records_total", {"outcome": "quarantined"}) == quarantined_before + 1

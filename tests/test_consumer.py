@@ -33,7 +33,6 @@ async def test_email_change_processes_once_and_invalidates_after_commit() -> Non
     assert any("INSERT INTO user_email_changelog" in q for q in queries)
     assert any("UPDATE users" in q for q in queries)
     assert any("INSERT INTO user_contacts" in q for q in queries)
-    assert any("INSERT INTO webhook_outbox" in q for q in queries)
     assert session.committed == 1
     assert notifier.invalidations == 1
 
@@ -60,7 +59,6 @@ async def test_redelivered_message_is_skipped_entirely() -> None:
     queries = [q for q, _ in session.statements]
     assert len([q for q in queries if "user_email_changelog" in q]) == 1
     assert not any("UPDATE users" in q for q in queries)
-    assert not any("webhook_outbox" in q for q in queries)
     assert session.committed == 0
     assert notifier.invalidations == 0
 

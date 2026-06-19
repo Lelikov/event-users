@@ -50,15 +50,11 @@ class FakeUsersDB:
 class FakeChangelog:
     def __init__(self) -> None:
         self.entries: list[dict] = []
-        self.outbox: list[dict] = []
 
     async def add_entry(self, *, user_id: uuid.UUID, old_email: str, new_email: str, changed_by: str) -> None:
         self.entries.append(
             {"user_id": user_id, "old_email": old_email, "new_email": new_email, "changed_by": changed_by},
         )
-
-    async def add_webhook_outbox(self, *, event_type: str, payload: dict) -> None:
-        self.outbox.append({"event_type": event_type, "payload": payload})
 
 
 def make_controller(db: FakeUsersDB | None = None) -> tuple[UsersController, FakeUsersDB, FakeChangelog]:
@@ -105,7 +101,6 @@ async def test_update_without_email_skips_changelog() -> None:
     await controller.update_user(user_id, make_update_dto(time_zone="Europe/Moscow"))
     assert db.updated == [(user_id, make_update_dto(time_zone="Europe/Moscow"), False)]
     assert changelog.entries == []
-    assert changelog.outbox == []
 
 
 async def test_update_with_same_email_skips_changelog() -> None:
@@ -114,10 +109,9 @@ async def test_update_with_same_email_skips_changelog() -> None:
     await controller.update_user(user_id, make_update_dto(email="a@b.c"))
     assert db.updated[0][2] is False
     assert changelog.entries == []
-    assert changelog.outbox == []
 
 
-async def test_update_with_email_change_writes_changelog_outbox_and_marks_admin() -> None:
+async def test_update_with_email_change_writes_changelog_and_marks_admin() -> None:
     user_id = uuid.uuid4()
     controller, db, changelog = make_controller(FakeUsersDB(existing=make_user_dto(user_id, email="old@b.c")))
     result = await controller.update_user(user_id, make_update_dto(email="new@b.c"), changed_by="admin@x.y")
@@ -127,12 +121,6 @@ async def test_update_with_email_change_writes_changelog_outbox_and_marks_admin(
     assert changelog.entries == [
         {"user_id": user_id, "old_email": "old@b.c", "new_email": "new@b.c", "changed_by": "admin@x.y"},
     ]
-    assert len(changelog.outbox) == 1
-    assert changelog.outbox[0]["event_type"] == "user.email.changed"
-    payload = changelog.outbox[0]["payload"]
-    assert payload["user_id"] == str(user_id)
-    assert payload["old_email"] == "old@b.c"
-    assert payload["new_email"] == "new@b.c"
 
 
 async def test_update_with_email_change_missing_user_returns_none() -> None:
@@ -140,4 +128,3 @@ async def test_update_with_email_change_missing_user_returns_none() -> None:
     result = await controller.update_user(uuid.uuid4(), make_update_dto(email="new@b.c"))
     assert result is None
     assert changelog.entries == []
-    assert changelog.outbox == []
