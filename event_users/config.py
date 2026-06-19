@@ -37,27 +37,6 @@ class Settings(BaseSettings):
 
     postgres_dsn: PostgresDsn = Field(strict=True)
 
-    # External CRM
-    is_sync_enabled: bool = False
-    crm_api_url: str = Field(strict=True)
-    crm_api_token: str = Field(strict=True)
-    # AES-256 key as hex string (64 hex chars = 32 bytes)
-    crm_encryption_key: str = Field(strict=True)
-
-    @field_validator("crm_encryption_key")
-    @classmethod
-    def validate_encryption_key(cls, v: str) -> str:
-        try:
-            key_bytes = bytes.fromhex(v)
-        except ValueError as err:
-            raise ValueError("crm_encryption_key must be valid hex") from err
-        if len(key_bytes) != 32:
-            raise ValueError(f"crm_encryption_key must decode to 32 bytes (AES-256), got {len(key_bytes)}")
-        return v
-
-    crm_sync_interval_seconds: int = 300  # 5 minutes
-    crm_sync_max_backoff_seconds: int = 1800  # cap for exponential backoff on repeated failures
-
     # event-admin cache invalidation
     event_admin_url: str = ""
     event_admin_cache_token: str = ""
@@ -67,14 +46,6 @@ class Settings(BaseSettings):
     rabbit_url: str = "amqp://guest:guest@localhost:5672/"
     is_consumer_enabled: bool = True
     rabbit_publish_timeout: float = 10.0
-
-    # CRM webhook
-    crm_webhook_url: str = ""
-    crm_webhook_token: str = ""
-    is_webhook_enabled: bool = False
-    webhook_poll_interval_seconds: int = 1
-    webhook_batch_size: int = 10
-    webhook_visibility_timeout_seconds: int = 120  # re-delivery window for claimed-but-unfinished rows
 
 
 @lru_cache(maxsize=1)

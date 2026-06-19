@@ -32,17 +32,6 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
     ["method", "route"],
 )
 
-CRM_SYNC_RECORDS_TOTAL = Counter(
-    "users_crm_sync_records_total",
-    "CRM sync record outcomes per cycle (synced, skipped_admin_guard, quarantined).",
-    ["outcome"],
-)
-CRM_SYNC_CYCLES_TOTAL = Counter(
-    "users_crm_sync_cycles_total",
-    "CRM sync cycle outcomes (ok or error).",
-    ["outcome"],
-)
-
 
 def route_template(request: Request) -> str:
     route = request.scope.get("route")
