@@ -1,7 +1,6 @@
 """RabbitMQ consumer for user email change events."""
 
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -78,17 +77,6 @@ async def handle_email_change(
                 DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
                 """,
                 {"user_id": user_id, "new_email": new_email},
-            )
-
-            # Add webhook outbox entry
-            await changelog_db.add_webhook_outbox(
-                event_type="user.email.changed",
-                payload={
-                    "user_id": user_id_str,
-                    "old_email": old_email,
-                    "new_email": new_email,
-                    "changed_at": datetime.now(UTC).isoformat(),
-                },
             )
 
             await session.commit()

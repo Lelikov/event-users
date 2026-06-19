@@ -1,4 +1,3 @@
-import json
 import uuid
 
 import structlog
@@ -90,41 +89,3 @@ class EmailChangelogDBAdapter:
             new_email=new_email,
         )
         return True
-
-    async def get_admin_changed_email_roles(self) -> set[tuple[str, str]]:
-        """(old_email, role) pairs the CRM sync must not resurrect — one query per sync cycle."""
-        rows = await self._sql.fetch_all(
-            """
-            SELECT DISTINCT c.old_email, u.role
-            FROM user_email_changelog c
-            JOIN users u ON u.id = c.user_id
-            WHERE u.email_source = 'admin'
-            """,
-            {},
-        )
-        return {(row["old_email"], row["role"]) for row in rows}
-
-    async def is_email_changed_by_admin(self, email: str, role: str) -> bool:
-        """Check if this email was recently changed away from by an admin (for CRM sync protection)."""
-        row = await self._sql.fetch_one(
-            """
-            SELECT 1 FROM user_email_changelog
-            WHERE old_email = :email
-              AND user_id IN (
-                  SELECT id FROM users WHERE role = :role AND email_source = 'admin'
-              )
-            LIMIT 1
-            """,
-            {"email": email, "role": role},
-        )
-        return row is not None
-
-    async def add_webhook_outbox(self, *, event_type: str, payload: dict) -> None:
-        await self._sql.execute(
-            """
-            INSERT INTO webhook_outbox (event_type, payload)
-            VALUES (:event_type, CAST(:payload AS jsonb))
-            """,
-            {"event_type": event_type, "payload": json.dumps(payload)},
-        )
-        logger.info("Webhook outbox entry added", event_type=event_type)

@@ -22,14 +22,3 @@ class IEmailChangelogDBAdapter(Protocol):
         changed_by: str,
         message_id: str | None = None,
     ) -> bool: ...
-
-    async def is_email_changed_by_admin(self, email: str, role: str) -> bool: ...
-
-    async def get_admin_changed_email_roles(self) -> set[tuple[str, str]]: ...
-
-    async def add_webhook_outbox(
-        self,
-        *,
-        event_type: str,
-        payload: dict,
-    ) -> None: ...
