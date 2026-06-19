@@ -100,6 +100,14 @@ async def test_upsert_user_from_crm_batches_contacts_into_one_statement(sql) -> 
     assert values["contact_ids"] == ["123", "tok", "a@b.c"]
 
 
+async def test_upsert_user_from_crm_returns_user_id(sql) -> None:
+    new_id = uuid.uuid4()
+    sql.fetch_one_results.append({"id": new_id})
+    adapter = UsersDBAdapter(sql)
+    result = await adapter.upsert_user_from_crm(email="a@b.c", role="client", time_zone="UTC")
+    assert result == new_id
+
+
 async def test_list_users_escapes_ilike_wildcards(sql) -> None:
     adapter = UsersDBAdapter(sql)
     sql.fetch_one_results.append({"total": 0})

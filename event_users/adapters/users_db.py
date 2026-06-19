@@ -294,7 +294,7 @@ class UsersDBAdapter:
         time_zone: str | None,
         name: str | None = None,
         contacts: list[CreateUserContactDTO] | None = None,
-    ) -> None:
+    ) -> uuid.UUID:
         # COALESCE preserves existing values when CRM sends NULL. This is intentional:
         # CRM null means "not provided", not "clear this field".
         # If CRM semantics change, switch to direct assignment.
@@ -324,3 +324,4 @@ class UsersDBAdapter:
         await self._upsert_contacts(user_row["id"], contacts_for_upsert)
 
         logger.debug("User upserted from CRM", email=email, role=role)
+        return user_row["id"]
