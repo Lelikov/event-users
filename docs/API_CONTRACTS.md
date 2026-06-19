@@ -87,7 +87,7 @@ Update an existing user (PATCH semantics -- only non-null fields are updated).
 
 **Errors**: 404 (user not found), 409 (email+role conflict), 422 (invalid timezone).
 
-**Email-change semantics**: when `email` differs from the current value, the update also sets `email_source='admin'`, writes a `user_email_changelog` entry (`changed_by` = token `sub`), and queues a `user.email.changed` webhook to CRM — same behaviour as the RabbitMQ consumer path.
+**Email-change semantics**: when `email` differs from the current value, the update also sets `email_source='admin'` and writes a `user_email_changelog` entry (`changed_by` = token `sub`) — same behaviour as the RabbitMQ consumer path.
 
 ---
 
@@ -290,5 +290,3 @@ are excluded from the RED counters.
 |---|---|---|
 | `http_requests_total` | counter | `method`, `route` (route template, `unmatched` for 404s), `status` |
 | `http_request_duration_seconds` | histogram | `method`, `route` |
-| `users_crm_sync_records_total` | counter | `outcome` (synced/skipped_admin_guard/quarantined) |
-| `users_crm_sync_cycles_total` | counter | `outcome` (ok/error) |

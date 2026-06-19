@@ -34,19 +34,6 @@ erDiagram
         timestamptz changed_at "NOT NULL, default now()"
     }
 
-    webhook_outbox {
-        uuid id PK "gen_random_uuid()"
-        text event_type "NOT NULL"
-        jsonb payload "NOT NULL"
-        text status "NOT NULL, default 'pending'"
-        int attempts "NOT NULL, default 0"
-        int max_attempts "NOT NULL"
-        timestamptz next_retry_at "NULLABLE"
-        timestamptz created_at "NOT NULL, default now()"
-        timestamptz delivered_at "NULLABLE"
-        text last_error "NULLABLE"
-    }
-
     users ||--o{ user_contacts : "has"
     users ||--o{ user_email_changelog : "has"
 ```
@@ -71,7 +58,7 @@ Source: `db/models.py:11-39`, migration `alembic/versions/0001_initial.py:24-52`
 - `ix_users_email` -- B-tree index on `email`
 - `ix_users_role` -- B-tree index on `role`
 
-**`email_source` semantics**: `'admin'` выставляется при изменении email администратором (REST или RabbitMQ путь) и «вооружает» защиту CRM-синка: записи CRM со старым email пропускаются (см. `get_admin_changed_email_roles`). Значение сбрасывается обратно в `'crm'` только когда CRM-выгрузка СОШЛАСЬ с новым email (конфликт upsert по `(email, role)` в `upsert_user_from_crm`) — а не в момент доставки вебхука: HTTP 2xx означает лишь приём вебхука CRM, не применение изменения.
+**`email_source` semantics**: информационный столбец. `'admin'` выставляется при изменении email администратором (REST или RabbitMQ путь). `'crm'` выставляется при синхронизации через event-db-sync (`upsert_user_from_crm`). Столбец не используется для guard-логики.
 
 ## Table: `user_contacts`
 
@@ -113,33 +100,9 @@ Source: `db/models.py:42-72`, migration `alembic/versions/0001_initial.py:54-82`
 - `ix_user_email_changelog_changed_at` -- B-tree index на `changed_at`
 - `uq_user_email_changelog_message_id` -- UNIQUE index на `message_id` (повторная доставка сообщения вызывает конфликт и обработка пропускается; NULL не конфликтуют)
 
-## Table: `webhook_outbox`
+## User Sync Upsert Logic (event-db-sync)
 
-Transactional outbox для доставки изменений во внешние системы (в первую очередь CRM). Обеспечивает at-least-once доставку с retry-логикой.
-
-| Column | Type | Nullable | Default | Notes |
-|--------|------|----------|---------|-------|
-| `id` | `UUID` | NO | `gen_random_uuid()` | Primary key |
-| `event_type` | `TEXT` | NO | -- | Тип события (например, `user.email.changed`) |
-| `payload` | `JSONB` | NO | -- | Данные для доставки |
-| `status` | `TEXT` | NO | `'pending'` | Статус: `pending`, `processing` (заявлено поллером, см. visibility timeout), `delivered`, `failed` |
-| `attempts` | `INT` | NO | `0` | Число попыток доставки |
-| `max_attempts` | `INT` | NO | -- | Максимальное число попыток |
-| `next_retry_at` | `TIMESTAMPTZ` | YES | NULL | Время следующей попытки (NULL = немедленно) |
-| `created_at` | `TIMESTAMPTZ` | NO | `now()` | Время создания записи |
-| `delivered_at` | `TIMESTAMPTZ` | YES | NULL | Время успешной доставки |
-| `last_error` | `TEXT` | YES | NULL | Текст последней ошибки |
-
-**Delivery semantics** (двухфазный поллер, безопасен при нескольких репликах):
-- Запись создаётся в одной транзакции с обновлением `users.email` — гарантирует атомарность.
-- Фаза 1 (claim): батч строк атомарно переводится в `status='processing'` c `next_retry_at = now() + WEBHOOK_VISIBILITY_TIMEOUT_SECONDS` (FOR UPDATE SKIP LOCKED) и коммитится.
-- Фаза 2 (delivery): каждая строка доставляется и финализируется в собственной транзакции: `delivered` / `pending` с квадратичным бэкоффом (`10 * attempts^2` с) / `failed` при исчерпании `max_attempts`.
-- Упавший воркер не теряет строки: его `processing`-заявки снова доступны после visibility timeout.
-- `users.email_source` НЕ сбрасывается при доставке — см. семантику `email_source` выше.
-
-## CRM Sync Upsert Logic
-
-Source: `adapters/users_db.py` (`upsert_user_from_crm`, `_upsert_contacts`)
+Triggered by cal.com DB trigger via event-db-sync (`user.upserted` → `handle_user_upserted`). Source: `adapters/users_db.py` (`upsert_user_from_crm`, `_upsert_contacts`)
 
 ```sql
 INSERT INTO users (email, name, role, time_zone, email_source)
@@ -164,9 +127,8 @@ DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
 ```
 
 **Semantics**:
-- `COALESCE` is intentional: CRM-sent NULL means "not provided", not "clear this field".
-- One transaction (commit) per CRM page; a failure on a later page keeps earlier pages.
-- Records whose `(email, role)` matches an admin-changed old email are skipped before the upsert (one guard query per sync cycle).
+- `COALESCE` is intentional: NULL from the source means "not provided", not "clear this field".
+- Sets `email_source='crm'` on upsert.
 
 ## Migration Chain
 
@@ -175,7 +137,7 @@ DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
 | `0001` | 2026-04-07 | Initial schema: `users` and `user_contacts` tables with constraints and indexes | `alembic/versions/0001_initial.py` |
 | `0002` | 2026-04-07 | Add `name` column (nullable TEXT) to `users` | `alembic/versions/0002_add_user_name.py` |
 | `0003` | 2026-04-13 | Rename role value `volunteer` to `organizer` (data migration) | `alembic/versions/0003_rename_volunteer_to_organizer.py` |
-| `0004` | 2026-04-26 | Add `email_source` column to `users`; create `user_email_changelog` and `webhook_outbox` tables | `alembic/versions/0004_email_source_changelog_webhook_outbox.py` |
+| `0004` | 2026-04-26 | Add `email_source` column to `users`; create `user_email_changelog` table (and `webhook_outbox`, subsequently removed) | `alembic/versions/0004_email_source_changelog_webhook_outbox.py` |
 | `0005` | 2026-06-11 | Add unique `message_id` to `user_email_changelog` (consumer idempotency on CloudEvent ce-id) | `alembic/versions/0005_changelog_message_id.py` |
 
 Current head: `0005`

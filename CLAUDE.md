@@ -41,7 +41,7 @@ alembic downgrade -1
 
 ## Architecture
 
-Layered async FastAPI service for managing users and syncing them from an external CRM.
+Layered async FastAPI service for managing users. User data is synchronised from cal.com via **event-db-sync** (cal.com DB trigger → `user.upserted` → `handle_user_upserted` → `upsert_user_from_crm`).
 
 **Request flow:** `routes.py` → `controllers/` → `adapters/` → `adapters/sql.py` (SqlExecutor) → SQLAlchemy AsyncSession → PostgreSQL
 
@@ -56,28 +56,18 @@ Layered async FastAPI service for managing users and syncing them from an extern
 - **`schemas/users.py`** — Pydantic models for HTTP requests/responses with `from_dto()` classmethods
 - **`ioc.py`** — Dishka DI container; app-scoped (engine, session factory, settings) and request-scoped (session, executor, adapter, controller)
 - **`db/models.py`** — SQLAlchemy ORM models (used by Alembic for migrations; queries are raw SQL in adapters)
-- **`crm/`** — CRM sync: `client.py` fetches encrypted data, `sync.py` decrypts (AES-256-CBC) and upserts users
 - **`consumer.py`** — RabbitMQ consumer for `user.email.change_requested` (queue `events.user.email`, bound to the `events` topic exchange); idempotent on CloudEvent `ce-id`
-- **`webhook/`** — transactional outbox poller delivering `user.email.changed` to CRM (two-phase claim + deliver, multi-replica safe)
-- **`adapters/changelog_db.py`** — email change audit log + webhook outbox writes
+- **`adapters/changelog_db.py`** — email change audit log (`user_email_changelog`)
 - **`auth.py`** — single token decode path (static service token or HS256 JWT, optional aud/iss); `require_admin` gates the entire `/api/users` router
-- **`metrics.py`** — Prometheus metrics: HTTP RED middleware (`http_requests_total`, `http_request_duration_seconds` by route template; `/metrics` + `/health` excluded), `users_crm_sync_records_total{outcome}`, `users_crm_sync_cycles_total{outcome}`; exposed at `GET /metrics`
-
-**CRM background sync:**
-- Runs every 5 minutes (exponential backoff on failures, capped) as an asyncio background task started in `lifespan`
-- Fetches encrypted user list from external CRM API with Bearer token auth
-- Decrypts using AES-256-CBC (key from `CRM_ENCRYPTION_KEY`, IV from response); payload-level failures raise `CrmDecryptError`, malformed records are quarantined and counted
-- Upserts users by unique `(email, role)` combination, one transaction per page
-- Skips records matching admin-changed old emails (`email_source='admin'` guard); flips `email_source` back to `'crm'` on convergence
+- **`metrics.py`** — Prometheus metrics: HTTP RED middleware (`http_requests_total`, `http_request_duration_seconds` by route template; `/metrics` + `/health` excluded); exposed at `GET /metrics`
 
 **DB Tables:**
-- `users` — email, role (client|organizer), time_zone, email_source; unique on (email, role)
+- `users` — email, role (client|organizer), time_zone, email_source (informational); unique on (email, role)
 - `user_contacts` — channel (email, telegram, push, …), contact_id; unique on (user_id, channel)
 - `user_email_changelog` — email change audit log; unique nullable `message_id` (consumer idempotency)
-- `webhook_outbox` — transactional outbox for CRM webhooks (pending/processing/delivered/failed)
 
 **DI scopes:**
-- `APP` scope: `Settings`, `AsyncEngine`, `async_sessionmaker`, `CrmClient`, `CrmSyncRunner`, `RabbitBroker`, `EmailChangeConsumer`, `WebhookOutboxSender`, `ICacheNotifier`
+- `APP` scope: `Settings`, `AsyncEngine`, `async_sessionmaker`, `RabbitBroker`, `EmailChangeConsumer`, `ICacheNotifier`
 - `REQUEST` scope: `AsyncSession`, `ISqlExecutor`, `IUsersDBAdapter`, `IEmailChangelogDBAdapter`, `IUsersController`
 
 **Adding a new endpoint:** define route in `routes.py` → add method to `IUsersController` and `IUsersDBAdapter` protocols → implement in `UsersController` and `UsersDBAdapter` → add DTO in `dto/users.py` → add response schema in `schemas/users.py`.
