@@ -10,6 +10,7 @@ erDiagram
         text name "NULLABLE"
         text role "NOT NULL (client|organizer)"
         text time_zone "NULLABLE"
+        text locale "NULLABLE"
         text email_source "NOT NULL, default 'crm'"
         timestamptz created_at "NOT NULL, default now()"
         timestamptz updated_at "NOT NULL, default now()"
@@ -49,6 +50,7 @@ Source: `db/models.py:11-39`, migration `alembic/versions/0001_initial.py:24-52`
 | `name` | `TEXT` | YES | NULL | Added in migration 0002 |
 | `role` | `TEXT` | NO | -- | `"client"` or `"organizer"` (renamed from `"volunteer"` in migration 0003) |
 | `time_zone` | `TEXT` | YES | NULL | IANA timezone string (e.g., `"Europe/Moscow"`) |
+| `locale` | `TEXT` | YES | NULL | Preferred language tag (e.g., `"ru"`, `"en"`). Added in migration 0007; no producer sets it yet — read path only (`GET`/`POST /api/users/by-ids`) |
 | `email_source` | `TEXT` | NO | `'crm'` | Источник последнего изменения email: `'crm'` или `'admin'`. Added in migration 0004 |
 | `created_at` | `TIMESTAMPTZ` | NO | `now()` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Last modification time |
@@ -139,8 +141,10 @@ DO UPDATE SET contact_id = EXCLUDED.contact_id, updated_at = now()
 | `0003` | 2026-04-13 | Rename role value `volunteer` to `organizer` (data migration) | `alembic/versions/0003_rename_volunteer_to_organizer.py` |
 | `0004` | 2026-04-26 | Add `email_source` column to `users`; create `user_email_changelog` table (and `webhook_outbox`, subsequently removed) | `alembic/versions/0004_email_source_changelog_webhook_outbox.py` |
 | `0005` | 2026-06-11 | Add unique `message_id` to `user_email_changelog` (consumer idempotency on CloudEvent ce-id) | `alembic/versions/0005_changelog_message_id.py` |
+| `0006` | 2026-06-19 | Drop the unused `webhook_outbox` table (CRM webhook machinery removed) | `alembic/versions/0006_drop_webhook_outbox.py` |
+| `0007` | 2026-07-13 | Add `locale` column (nullable TEXT) to `users` — exposed via `POST /api/users/by-ids` so event-scheduling can resolve a participant's preferred language | `alembic/versions/0007_add_user_locale.py` |
 
-Current head: `0005`
+Current head: `0007`
 
 Migration commands:
 ```bash

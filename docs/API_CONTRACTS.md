@@ -45,6 +45,7 @@ Create a new user.
   "name": "John Doe",
   "role": "client",
   "time_zone": "Europe/Moscow",
+  "locale": null,
   "contacts": [
     {"id": "uuid", "user_id": "uuid", "channel": "email", "contact_id": "user@example.com", "created_at": "...", "updated_at": "..."},
     {"id": "uuid", "user_id": "uuid", "channel": "telegram", "contact_id": "123456", "created_at": "...", "updated_at": "..."}
@@ -117,7 +118,7 @@ Fetch multiple users by a list of UUIDs in a single request.
 
 **Errors**: 422 (more than 200 IDs provided or invalid UUID format).
 
-**Notes**: IDs not found in the database are silently omitted from `items`. Order of results is not guaranteed to match order of input `ids`.
+**Notes**: IDs not found in the database are silently omitted from `items`. Order of results is not guaranteed to match order of input `ids`. Each item is a full `UserResponse`, so it also carries `name` and `locale` (both nullable — `locale` has no producer yet, added in migration 0007) — event-scheduling's `UsersClient.by_ids` (`event-scheduling/event_scheduling/publishing/users_client.py`) relies on these to resolve booking participant name/locale.
 
 ---
 

@@ -20,6 +20,7 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     time_zone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locale: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'crm'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

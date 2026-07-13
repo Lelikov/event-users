@@ -40,6 +40,7 @@ class UserResponse(BaseModel):
     name: str | None
     role: str
     time_zone: str | None
+    locale: str | None
     contacts: list[UserContactResponse]
     created_at: datetime
     updated_at: datetime
@@ -52,6 +53,7 @@ class UserResponse(BaseModel):
             name=dto.name,
             role=dto.role,
             time_zone=dto.time_zone,
+            locale=dto.locale,
             contacts=[UserContactResponse.from_dto(c) for c in dto.contacts],
             created_at=dto.created_at,
             updated_at=dto.updated_at,

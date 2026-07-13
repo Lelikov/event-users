@@ -23,6 +23,7 @@ class UserDTO:
     contacts: list[UserContactDTO]
     created_at: datetime
     updated_at: datetime
+    locale: str | None = None
 
 
 @dataclass(frozen=True)

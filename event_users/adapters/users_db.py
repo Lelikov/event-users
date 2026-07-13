@@ -44,6 +44,7 @@ def _user_from_row(row: RowMapping, contacts: list[UserContactDTO]) -> UserDTO:
         contacts=contacts,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        locale=row["locale"],
     )
 
 
@@ -69,7 +70,7 @@ class UsersDBAdapter:
                 """
                 INSERT INTO users (email, name, role, time_zone)
                 VALUES (:email, :name, :role, :time_zone)
-                RETURNING id, email, name, role, time_zone, created_at, updated_at
+                RETURNING id, email, name, role, time_zone, locale, created_at, updated_at
                 """,
                 {"email": dto.email, "name": dto.name, "role": dto.role, "time_zone": dto.time_zone},
             )
@@ -159,7 +160,8 @@ class UsersDBAdapter:
 
         if not set_clauses:
             return await self._sql.fetch_one(
-                "SELECT id, email, name, role, time_zone, created_at, updated_at FROM users WHERE id = :user_id",
+                "SELECT id, email, name, role, time_zone, locale, created_at, updated_at "
+                "FROM users WHERE id = :user_id",
                 {"user_id": user_id},
             )
 
@@ -170,7 +172,7 @@ class UsersDBAdapter:
                 UPDATE users
                 SET {", ".join(set_clauses)}
                 WHERE id = :user_id
-                RETURNING id, email, name, role, time_zone, created_at, updated_at
+                RETURNING id, email, name, role, time_zone, locale, created_at, updated_at
                 """,  # noqa: S608
                 values,
             )
@@ -182,7 +184,7 @@ class UsersDBAdapter:
 
     async def get_user(self, user_id: uuid.UUID) -> UserDTO | None:
         row = await self._sql.fetch_one(
-            "SELECT id, email, name, role, time_zone, created_at, updated_at FROM users WHERE id = :user_id",
+            "SELECT id, email, name, role, time_zone, locale, created_at, updated_at FROM users WHERE id = :user_id",
             {"user_id": user_id},
         )
         if row is None:
@@ -193,7 +195,7 @@ class UsersDBAdapter:
     async def get_user_by_email_role(self, email: str, role: str) -> UserDTO | None:
         row = await self._sql.fetch_one(
             (
-                "SELECT id, email, name, role, time_zone, created_at, updated_at "
+                "SELECT id, email, name, role, time_zone, locale, created_at, updated_at "
                 "FROM users WHERE email = :email AND role = :role"
             ),
             {"email": email, "role": role},
@@ -227,7 +229,7 @@ class UsersDBAdapter:
 
         rows = await self._sql.fetch_all(
             f"""
-            SELECT id, email, name, role, time_zone, created_at, updated_at
+            SELECT id, email, name, role, time_zone, locale, created_at, updated_at
             FROM users
             {where_clause}
             ORDER BY created_at
@@ -262,7 +264,7 @@ class UsersDBAdapter:
 
         rows = await self._sql.fetch_all(
             """
-            SELECT id, email, name, role, time_zone, created_at, updated_at
+            SELECT id, email, name, role, time_zone, locale, created_at, updated_at
             FROM users
             WHERE id = ANY(:ids)
             """,

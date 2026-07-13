@@ -19,6 +19,7 @@ def user_row(user_id: uuid.UUID | None = None, email: str = "a@b.c", role: str =
         "name": None,
         "role": role,
         "time_zone": None,
+        "locale": None,
         "created_at": NOW,
         "updated_at": NOW,
     }
@@ -106,6 +107,23 @@ async def test_upsert_user_from_crm_returns_user_id(sql) -> None:
     adapter = UsersDBAdapter(sql)
     result = await adapter.upsert_user_from_crm(email="a@b.c", role="client", time_zone="UTC")
     assert result == new_id
+
+
+async def test_get_users_by_ids_maps_name_and_locale(sql) -> None:
+    adapter = UsersDBAdapter(sql)
+    user_id = uuid.uuid4()
+    row = user_row(user_id)
+    row["name"] = "Alice"
+    row["locale"] = "en"
+    sql.fetch_all_results.append([row])
+    sql.fetch_all_results.append([])  # contacts
+
+    result = await adapter.get_users_by_ids([user_id])
+
+    assert result[0].name == "Alice"
+    assert result[0].locale == "en"
+    select_query, _ = sql.statements[0]
+    assert "locale" in select_query
 
 
 async def test_list_users_escapes_ilike_wildcards(sql) -> None:
